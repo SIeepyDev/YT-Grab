@@ -460,14 +460,14 @@
   .mode-card svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
 
   /* =================================================================
-     Themebar controls — shared vocabulary used by Layout, Background,
-     and Gradient sections. One compact set of primitives (preset
-     card, chip, slider, swatch) so every section feels like the same
-     family without each one inventing its own look.
+     Themebar controls — shared vocabulary used by Background and
+     Gradient sections. One compact set of primitives (preset card,
+     slider, toggle) so both sections feel like the same family
+     without each one inventing its own look.
      ================================================================= */
 
   /* Preset card grid — two or three per row, each one a mini swatch
-     with a title. Used by Layout and Gradient presets. */
+     with a title. Used by Background and Gradient presets. */
   .theme-presets {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -503,48 +503,13 @@
   }
   .preset-card.active .preset-label { color: var(--accent); }
 
-  /* Mini layout diagram inside a preset-preview — three vertical bars
-     showing the column arrangement. Thickness/visibility driven by
-     per-preset classes so one shape serves all Layout presets. */
-  .lp-mini {
-    display: flex; gap: 3px;
-    height: 100%; width: 100%;
-    padding: 4px;
-  }
-  .lp-mini span {
-    background: var(--text-4);
-    border-radius: 2px;
-    flex: 1;
-    opacity: 0.55;
-  }
-  .lp-mini.focus span:nth-child(2) { flex: 2; opacity: 0.9; background: var(--accent); }
-  .lp-mini.stacked { flex-direction: column; }
-  .lp-mini.stacked span { width: 100%; height: 6px; }
-
-  /* Chip row — small toggle pills. Used by the Layout column-
-     visibility toggles and anywhere else a set of on/off options fits
-     on one line. */
-  .theme-chip-row {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    margin-top: 10px;
-  }
-  .theme-chip {
-    padding: 5px 10px;
-    background: var(--bg-2);
-    border: 1px solid var(--border-2);
-    border-radius: 999px;
-    color: var(--text-3);
-    font-size: 10px; font-weight: 600;
-    letter-spacing: 0.3px;
-    cursor: pointer;
-    transition: all 0.15s;
-    user-select: none;
-  }
-  .theme-chip:hover { color: var(--text); border-color: var(--text-4); }
-  .theme-chip.on {
-    background: var(--accent-subtle);
-    border-color: var(--accent);
-    color: var(--accent);
+  /* Helper text — quiet hint line beneath a control, explaining
+     what a toggle does without cluttering the label itself. */
+  .theme-hint {
+    font-size: 10px;
+    color: var(--text-4);
+    margin-top: 4px;
+    line-height: 1.4;
   }
 
   /* Labeled slider row — tiny label on the left, accent-styled
@@ -619,31 +584,18 @@
     background: var(--accent);
   }
 
-  /* Background swatch grid — color circles for canvas presets. */
-  .bg-swatches {
+  /* Background preset cards — same preset-card primitive as Gradient,
+     but with a larger preview that fills with just the bg color. Kept
+     under .bg-presets so we can filter dark/light via [data-theme] on
+     <html> without touching CSS specificity elsewhere. */
+  .bg-presets {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: 1fr 1fr 1fr 1fr;
     gap: 8px;
   }
-  .bg-swatch {
-    position: relative;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    cursor: pointer;
-    border: 2px solid var(--border);
-    transition: transform 0.15s, border-color 0.15s;
-  }
-  .bg-swatch:hover { transform: scale(1.12); }
-  .bg-swatch.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-subtle);
-  }
-  .bg-swatch.active::after {
-    content: '';
-    position: absolute; inset: 0;
-    border-radius: 50%;
-    box-shadow: inset 0 0 0 2px var(--bg-1);
-  }
+  /* Hide the dark-only bgs when theme is light, and vice versa. */
+  html[data-theme="light"] .bg-presets .preset-card[data-bg-mode="dark"] { display: none; }
+  html:not([data-theme="light"]) .bg-presets .preset-card[data-bg-mode="light"] { display: none; }
 
   /* =================================================================
      Canvas effects — the actual visual changes driven by themebar
@@ -741,56 +693,6 @@
     html[data-grad-animate="on"] body::after { animation: none; }
   }
 
-  /* Layout presets — tweak the 3-column grid. Default (no attr) keeps
-     the existing .95 / 1.25 / .95 ratio. */
-
-  /* Focus: fixed-width slim rails on each side (280px), middle column
-     takes everything remaining. On a 1920px window the middle goes from
-     ~750px (classic) to ~1260px (focus) — a dramatic, obvious shift.
-     Below 1100px handled by the single-col media query anyway. */
-  html[data-layout="focus"] .page-grid {
-    grid-template-columns: 280px minmax(0, 1fr) 280px;
-  }
-
-  /* Stacked: true single-column view, centered, capped at a readable
-     width. Source order: History -> URL/Previous -> Active, rearranged
-     via grid-template-areas so the URL paste form lands at the top
-     (the primary action), History below it, Active at the bottom.
-     Tall cards don't flex-fill in stacked mode — they'd eat the whole
-     page each; instead they cap at a fixed height and scroll internally. */
-  html[data-layout="stacked"] .page-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "middle" "history" "active";
-    max-width: 820px;
-    margin-left: auto;
-    margin-right: auto;
-    flex: 0 0 auto;
-    align-items: start;
-  }
-  html[data-layout="stacked"] .page-grid > .col:nth-child(1) { grid-area: history; }
-  html[data-layout="stacked"] .page-grid > .col:nth-child(2) { grid-area: middle; }
-  html[data-layout="stacked"] .page-grid > .col:nth-child(3) { grid-area: active; }
-  html[data-layout="stacked"] .page-grid .col > .card:last-child {
-    flex: 0 0 auto;
-  }
-  html[data-layout="stacked"] .page-grid .col > .card:last-child .scroll-list {
-    max-height: 360px;
-    flex: 0 0 auto;
-  }
-  /* In stacked mode the total column height usually exceeds 100vh
-     (URL + Previous + History + Active ~ 1400px), so unlock body
-     scroll. All other layouts keep the hard viewport lock from v1.1. */
-  html[data-layout="stacked"] body {
-    overflow-y: auto;
-    height: auto;
-    min-height: 100vh;
-  }
-  /* Column visibility toggles — data-cols is a space-separated list
-     of which columns to SHOW. Absence of a token hides that column.
-     Tokens: h (history), m (middle), a (active). */
-  html[data-cols]:not([data-cols~="h"]) .page-grid > .col:nth-child(1) { display: none; }
-  html[data-cols]:not([data-cols~="m"]) .page-grid > .col:nth-child(2) { display: none; }
-  html[data-cols]:not([data-cols~="a"]) .page-grid > .col:nth-child(3) { display: none; }
 
   /* Light theme — carefully tuned to avoid the "flashbang" feel of a
      naive invert. Principles:
@@ -1950,7 +1852,7 @@
 
       <section class="sb-section">
         <h3>Settings</h3>
-        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.2.1</div>
+        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.2.2</div>
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
@@ -1972,7 +1874,7 @@
   </aside>
 
   <!-- Right-side theme panel. Collapsed 44px shows just a palette
-       icon. Expanded 300px shows Mode / Layout / Background /
+       icon. Expanded 300px shows Mode / Background /
        Gradient sections. Currently only Mode is functional;
        others are scaffolded placeholders for the next pass. -->
   <aside class="themebar" id="themebar" data-expanded="false" aria-label="Theme panel">
@@ -2028,50 +1930,53 @@
         </div>
       </section>
 
-      <!-- ======== LAYOUT ========
-           Preset cards for the 3-column arrangement, plus chip toggles
-           to hide any column the user doesn't want visible. -->
-      <section class="theme-section">
-        <h3>Layout</h3>
-        <div class="theme-presets three" id="layout-presets">
-          <button class="preset-card" data-layout="classic" onclick="setLayoutPreset('classic')">
-            <div class="preset-preview"><div class="lp-mini classic"><span></span><span></span><span></span></div></div>
-            <span class="preset-label">Classic</span>
-          </button>
-          <button class="preset-card" data-layout="focus" onclick="setLayoutPreset('focus')">
-            <div class="preset-preview"><div class="lp-mini focus"><span></span><span></span><span></span></div></div>
-            <span class="preset-label">Focus</span>
-          </button>
-          <button class="preset-card" data-layout="stacked" onclick="setLayoutPreset('stacked')">
-            <div class="preset-preview"><div class="lp-mini stacked"><span></span><span></span><span></span></div></div>
-            <span class="preset-label">Stacked</span>
-          </button>
-        </div>
-        <div class="theme-chip-row" id="layout-cols">
-          <span class="theme-chip" data-col="h" onclick="toggleColumn('h')">History</span>
-          <span class="theme-chip" data-col="m" onclick="toggleColumn('m')">URL · Previous</span>
-          <span class="theme-chip" data-col="a" onclick="toggleColumn('a')">Active</span>
-        </div>
-      </section>
-
       <!-- ======== BACKGROUND ========
-           Canvas swatches, accent-tint slider, film-grain toggle. Each
-           swatch's preview color equals the actual --bg it applies. -->
+           Labeled preset cards for canvas color. Filtered by current
+           theme mode — dark-variant cards show in dark mode, light
+           variants in light mode, so you only see relevant options. -->
       <section class="theme-section">
         <h3>Background</h3>
-        <div class="bg-swatches" id="bg-swatches">
-          <span class="bg-swatch" data-bg=""         style="background:#0b0b0f;" title="Default"  onclick="setBgPreset('')"></span>
-          <span class="bg-swatch" data-bg="void"     style="background:#050509;" title="Void"     onclick="setBgPreset('void')"></span>
-          <span class="bg-swatch" data-bg="graphite" style="background:#17171d;" title="Graphite" onclick="setBgPreset('graphite')"></span>
-          <span class="bg-swatch" data-bg="midnight" style="background:#0a0f1e;" title="Midnight" onclick="setBgPreset('midnight')"></span>
-          <span class="bg-swatch" data-bg="slate"    style="background:#141820;" title="Slate"    onclick="setBgPreset('slate')"></span>
-          <span class="bg-swatch" data-bg="cream"    style="background:#f5efe4;" title="Cream"    onclick="setBgPreset('cream')"></span>
-          <span class="bg-swatch" data-bg="snow"     style="background:#f8f9fb;" title="Snow"     onclick="setBgPreset('snow')"></span>
+        <div class="bg-presets" id="bg-presets">
+          <!-- Dark variants -->
+          <button class="preset-card" data-bg=""         data-bg-mode="dark" onclick="setBgPreset('')">
+            <div class="preset-preview" style="background:#0b0b0f;"></div>
+            <span class="preset-label">Default</span>
+          </button>
+          <button class="preset-card" data-bg="void"     data-bg-mode="dark" onclick="setBgPreset('void')">
+            <div class="preset-preview" style="background:#050509;"></div>
+            <span class="preset-label">Void</span>
+          </button>
+          <button class="preset-card" data-bg="graphite" data-bg-mode="dark" onclick="setBgPreset('graphite')">
+            <div class="preset-preview" style="background:#17171d;"></div>
+            <span class="preset-label">Graphite</span>
+          </button>
+          <button class="preset-card" data-bg="midnight" data-bg-mode="dark" onclick="setBgPreset('midnight')">
+            <div class="preset-preview" style="background:#0a0f1e;"></div>
+            <span class="preset-label">Midnight</span>
+          </button>
+          <button class="preset-card" data-bg="slate"    data-bg-mode="dark" onclick="setBgPreset('slate')">
+            <div class="preset-preview" style="background:#141820;"></div>
+            <span class="preset-label">Slate</span>
+          </button>
+          <!-- Light variants -->
+          <button class="preset-card" data-bg=""      data-bg-mode="light" onclick="setBgPreset('')">
+            <div class="preset-preview" style="background:#dddee3;border-color:#c7c9d0;"></div>
+            <span class="preset-label">Default</span>
+          </button>
+          <button class="preset-card" data-bg="cream" data-bg-mode="light" onclick="setBgPreset('cream')">
+            <div class="preset-preview" style="background:#f5efe4;border-color:#c7c9d0;"></div>
+            <span class="preset-label">Cream</span>
+          </button>
+          <button class="preset-card" data-bg="snow"  data-bg-mode="light" onclick="setBgPreset('snow')">
+            <div class="preset-preview" style="background:#f8f9fb;border-color:#c7c9d0;"></div>
+            <span class="preset-label">Snow</span>
+          </button>
         </div>
-        <div class="theme-toggle-row">
+        <div class="theme-toggle-row" style="margin-top: 12px;">
           <span>Film grain</span>
           <span class="theme-toggle" id="bg-noise-toggle" onclick="toggleBgNoise()" role="switch" aria-label="Film grain"></span>
         </div>
+        <p class="theme-hint">Subtle analog noise overlay on the canvas. Adds depth without affecting contrast.</p>
       </section>
 
       <!-- ======== GRADIENT ========
@@ -2118,12 +2023,14 @@
           <label>Intensity</label>
           <input type="range" class="theme-slider" id="grad-intensity"
                  min="0" max="100" value="40" oninput="setGradientIntensity(this.value)">
-          <span class="theme-slider-val" id="grad-intensity-val">40</span>
+          <span class="theme-slider-val" id="grad-intensity-val">40%</span>
         </div>
-        <div class="theme-toggle-row">
+        <p class="theme-hint" style="margin-top: 2px;">How visible the mesh is. 0% hides it, 100% is full-bleed.</p>
+        <div class="theme-toggle-row" style="margin-top: 12px;">
           <span>Animated drift</span>
           <span class="theme-toggle" id="grad-animate-toggle" onclick="toggleGradientAnimate()" role="switch" aria-label="Animated drift"></span>
         </div>
+        <p class="theme-hint">Slow ~40 s orbit — colors drift gently like a lava lamp. Off by default.</p>
       </section>
     </div>
   </aside>
@@ -2449,9 +2356,7 @@
     hideHint: false,          // hide the "Enter to load · Ctrl+V..." hint line
     themeMode: 'dark',        // 'dark' | 'light' — right themebar Mode section
     // ===== Themebar personalization =====
-    layoutPreset:  'classic', // classic | focus | stacked — column arrangement
-    colsVisible:   'h m a',   // space-separated tokens: h (history), m (middle), a (active)
-    bgPreset:      '',        // '' (default) | void | graphite | midnight | slate | cream | paper | snow
+    bgPreset:      '',        // '' (default) | void | graphite | midnight | slate | cream | snow
     bgNoise:       false,     // subtle film-grain overlay
     gradientPreset:    'off', // off | aurora | sunset | ocean | plum | ember | mono | accent
     gradientIntensity: 40,    // 0-100 — overlay opacity %
@@ -2617,7 +2522,7 @@
     if (btn) btn.classList.toggle('active', !!on);
     if (on) {
       _syncThemeModeCards();
-      // Re-sync Layout / Background / Gradient UI every time the panel
+      // Re-sync Background / Gradient UI every time the panel
       // opens so stored values always match what the user sees.
       if (typeof applyThemebar === 'function') applyThemebar();
     }
@@ -2696,7 +2601,7 @@
   }
 
   // -------------------------------------------------------------------
-  // Themebar personalization (Layout / Background / Gradient).
+  // Themebar personalization (Background / Gradient).
   // All three sections drive data-* attributes on <html>; CSS does the
   // rest. One apply function per concern, one sync function that
   // paints the themebar controls so they always reflect SETTINGS.
@@ -2712,39 +2617,6 @@
     });
   }
 
-  // ----- Layout -----
-  function applyLayout() {
-    const p = SETTINGS.layoutPreset || 'classic';
-    if (p === 'classic') document.documentElement.removeAttribute('data-layout');
-    else                 document.documentElement.setAttribute('data-layout', p);
-    // Column visibility — normalize to tokens the CSS expects.
-    const tokens = (SETTINGS.colsVisible || 'h m a').split(/\s+/).filter(Boolean).join(' ');
-    document.documentElement.setAttribute('data-cols', tokens || '-');
-  }
-  function _syncLayoutUI() {
-    _paintPresetGroup('layout-presets', 'layout', SETTINGS.layoutPreset || 'classic');
-    const vis = (SETTINGS.colsVisible || 'h m a').split(/\s+/);
-    document.querySelectorAll('#layout-cols .theme-chip').forEach(chip => {
-      chip.classList.toggle('on', vis.includes(chip.dataset.col));
-    });
-  }
-  function setLayoutPreset(name) {
-    SETTINGS.layoutPreset = name;
-    saveSettings(SETTINGS);
-    applyLayout();
-    _syncLayoutUI();
-  }
-  function toggleColumn(token) {
-    const set = new Set((SETTINGS.colsVisible || 'h m a').split(/\s+/).filter(Boolean));
-    if (set.has(token)) set.delete(token); else set.add(token);
-    // Don't let the user hide every column — keep at least one.
-    if (set.size === 0) set.add(token);
-    SETTINGS.colsVisible = [...set].join(' ');
-    saveSettings(SETTINGS);
-    applyLayout();
-    _syncLayoutUI();
-  }
-
   // ----- Background -----
   function applyBackground() {
     const p = SETTINGS.bgPreset || '';
@@ -2754,7 +2626,10 @@
   }
   function _syncBackgroundUI() {
     const p = SETTINGS.bgPreset || '';
-    document.querySelectorAll('#bg-swatches .bg-swatch').forEach(s => {
+    // Two cards may share the same data-bg="" (Default for dark + Default
+    // for light) — only mark the visible one active. Both will check, but
+    // only the visible card paints since the other is display:none.
+    document.querySelectorAll('#bg-presets .preset-card').forEach(s => {
       s.classList.toggle('active', (s.dataset.bg || '') === p);
     });
     const t = document.getElementById('bg-noise-toggle');
@@ -2789,7 +2664,7 @@
     const s = document.getElementById('grad-intensity');
     const v = document.getElementById('grad-intensity-val');
     if (s) s.value = SETTINGS.gradientIntensity;
-    if (v) v.textContent = SETTINGS.gradientIntensity;
+    if (v) v.textContent = SETTINGS.gradientIntensity + '%';
     const t = document.getElementById('grad-animate-toggle');
     if (t) t.classList.toggle('on', !!SETTINGS.gradientAnimate);
   }
@@ -2816,10 +2691,8 @@
   // and whenever the themebar opens so stored values always match
   // what the user sees.
   function applyThemebar() {
-    applyLayout();
     applyBackground();
     applyGradient();
-    _syncLayoutUI();
     _syncBackgroundUI();
     _syncGradientUI();
   }
@@ -2875,10 +2748,9 @@
   applyAccentHex(SETTINGS.accentHex);
   applyUISettings();
   applyThemeMode(SETTINGS.themeMode || 'dark');
-  // Themebar personalization (layout/background/gradient) — apply the
-  // raw data-* attrs immediately so there's no flash-of-default-theme.
+  // Themebar personalization (background/gradient) — apply the raw
+  // data-* attrs immediately so there's no flash-of-default-theme.
   // UI sync runs after DOM is parsed; elements don't exist yet here.
-  applyLayout();
   applyBackground();
   applyGradient();
 
@@ -3881,7 +3753,7 @@
 
   // Init
   wireSettingsControls();   // binds panel -> SETTINGS -> applyUISettings
-  applyThemebar();          // paint layout/background/gradient control states
+  applyThemebar();          // paint background/gradient control states
   onFormatChange();         // shows/hides bitrate based on current format
   loadHistory();
   loadActivity();

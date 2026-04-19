@@ -100,6 +100,14 @@ Built by [SleepyDev](https://github.com/SIeepyDev). Part of the Luna workspace t
 
 ## Changelog
 
+### v1.2.2 — Themebar polish (2026-04)
+
+- **Layout section removed.** Classic was the winner — Focus was too subtle, Stacked never felt right on wide monitors. Killing choice here removes the three preset cards, the column-visibility chips, and ~50 lines of CSS. Page grid is back to the clean 3-column default, no branching.
+- **Background section** now uses labeled preset cards (same primitive as Gradient) so every option has a name underneath instead of hover-only tooltips on unlabeled circles. Filtered by theme mode: Void / Graphite / Midnight / Slate show in Dark, Cream / Snow in Light. You only see relevant options.
+- **Film grain** gets an inline hint: *"Subtle analog noise overlay on the canvas. Adds depth without affecting contrast."*
+- **Gradient intensity** readout now shows a `%` suffix. Inline hint: *"How visible the mesh is. 0% hides it, 100% is full-bleed."*
+- **Animated drift** gets an inline hint: *"Slow ~40s orbit — colors drift gently like a lava lamp. Off by default."*
+
 ### v1.2.1 — Layout preset fix (2026-04)
 
 - **Focus** is now dramatic instead of subtle — sides become fixed 280 px slim rails and the middle column takes all remaining width. On a 1920 px window the middle goes from ~750 px (Classic) to ~1260 px.
