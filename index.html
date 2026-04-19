@@ -743,11 +743,47 @@
 
   /* Layout presets — tweak the 3-column grid. Default (no attr) keeps
      the existing .95 / 1.25 / .95 ratio. */
+
+  /* Focus: fixed-width slim rails on each side (280px), middle column
+     takes everything remaining. On a 1920px window the middle goes from
+     ~750px (classic) to ~1260px (focus) — a dramatic, obvious shift.
+     Below 1100px handled by the single-col media query anyway. */
   html[data-layout="focus"] .page-grid {
-    grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.8fr) minmax(0, 0.75fr);
+    grid-template-columns: 280px minmax(0, 1fr) 280px;
   }
+
+  /* Stacked: true single-column view, centered, capped at a readable
+     width. Source order: History -> URL/Previous -> Active, rearranged
+     via grid-template-areas so the URL paste form lands at the top
+     (the primary action), History below it, Active at the bottom.
+     Tall cards don't flex-fill in stacked mode — they'd eat the whole
+     page each; instead they cap at a fixed height and scroll internally. */
   html[data-layout="stacked"] .page-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "middle" "history" "active";
+    max-width: 820px;
+    margin-left: auto;
+    margin-right: auto;
+    flex: 0 0 auto;
+    align-items: start;
+  }
+  html[data-layout="stacked"] .page-grid > .col:nth-child(1) { grid-area: history; }
+  html[data-layout="stacked"] .page-grid > .col:nth-child(2) { grid-area: middle; }
+  html[data-layout="stacked"] .page-grid > .col:nth-child(3) { grid-area: active; }
+  html[data-layout="stacked"] .page-grid .col > .card:last-child {
+    flex: 0 0 auto;
+  }
+  html[data-layout="stacked"] .page-grid .col > .card:last-child .scroll-list {
+    max-height: 360px;
+    flex: 0 0 auto;
+  }
+  /* In stacked mode the total column height usually exceeds 100vh
+     (URL + Previous + History + Active ~ 1400px), so unlock body
+     scroll. All other layouts keep the hard viewport lock from v1.1. */
+  html[data-layout="stacked"] body {
+    overflow-y: auto;
+    height: auto;
+    min-height: 100vh;
   }
   /* Column visibility toggles — data-cols is a space-separated list
      of which columns to SHOW. Absence of a token hides that column.
@@ -1914,7 +1950,7 @@
 
       <section class="sb-section">
         <h3>Settings</h3>
-        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.2</div>
+        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.2.1</div>
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>

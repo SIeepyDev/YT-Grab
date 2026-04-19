@@ -100,6 +100,12 @@ Built by [SleepyDev](https://github.com/SIeepyDev). Part of the Luna workspace t
 
 ## Changelog
 
+### v1.2.1 — Layout preset fix (2026-04)
+
+- **Focus** is now dramatic instead of subtle — sides become fixed 280 px slim rails and the middle column takes all remaining width. On a 1920 px window the middle goes from ~750 px (Classic) to ~1260 px.
+- **Stacked** is now a true single-column view, capped at 820 px and centered. `grid-template-areas` reorders children so URL paste lands at the top, History below it, Active at the bottom.
+- Tall cards in Stacked mode stop trying to flex-fill the viewport and cap at 360 px internal scroll. Body scroll-lock unlocks in Stacked since the stacked column is usually taller than 100 vh.
+
 ### v1.2 — Theming Polish (2026-04)
 
 Themebar grew up. The right-side Themes panel is no longer a gear with a color picker — it's a proper personalization surface with four sections: Theme mode, Layout, Background, and Gradient.
