@@ -100,6 +100,30 @@ Built by [SleepyDev](https://github.com/SIeepyDev). Part of the Luna workspace t
 
 ## Changelog
 
+### v1.3 — Typography + Glass (2026-04)
+
+Two new themebar sections. The theme system is now less "pick a color" and more "dial in a reading environment."
+
+**Typography**
+- **Size slider** — 85 %–120 % of the 14 px body base. Drives a `--font-scale` CSS token; everything inheriting from body scales together.
+- **Line slider** — 1.30–1.70 line-height, shown as the float value (e.g. `1.50`).
+- **Spacing slider** — character spacing from `0` to `+40` (1/1000 em). Tightens or opens text without touching size.
+- **Weight picker** — Light 300 / Regular 400 / Medium 500 preset cards, each with an `Aa` preview at the actual weight.
+- **Dyslexia-friendly toggle** — swaps the UI font to Verdana (wide x-height, distinct letterforms, on every Windows machine). Atkinson Hyperlegible is a secondary fallback if the system happens to have it.
+
+**Glass**
+- Four presets: **Off / Subtle / Medium / Heavy**. Each maps to a (blur, tint) pair — `0 / 1.00`, `8 / 0.85`, `16 / 0.70`, `24 / 0.55`.
+- `.card` background now uses `rgba(var(--bg-1-rgb), var(--glass-tint))` so the tint dials opacity without losing theme color, and `backdrop-filter: blur(var(--glass-blur)) saturate(1.15)` frosts whatever sits behind (gradient mesh, film grain, the canvas itself).
+- Works best with a gradient enabled — inline hint line says so.
+
+**Layered shadow tokens**
+- New `--shadow-card` replaces the old single 12 px drop. Composite of a tight 1-2 px close shadow and a soft 24 px far shadow — crisp on any background including noisy or gradient canvases.
+- Light theme overrides with gentler values. Per-component light-mode shadow override removed (the token handles it).
+
+**Under the hood**
+- Every v1.3 control is a CSS custom property or one `data-dyslexia` attribute on `<html>`. No per-element JS styling.
+- New settings: `fontScale`, `lineHeight`, `letterSpacing`, `fontWeight`, `dyslexiaFont`, `glassMode`. Migration-safe via the existing spread-merge.
+
 ### v1.2.2 — Themebar polish (2026-04)
 
 - **Layout section removed.** Classic was the winner — Focus was too subtle, Stacked never felt right on wide monitors. Killing choice here removes the three preset cards, the column-visibility chips, and ~50 lines of CSS. Page grid is back to the clean 3-column default, no branching.

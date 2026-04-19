@@ -42,6 +42,33 @@
     --warn:      #f59e0b;
     --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --mono: 'JetBrains Mono', 'Consolas', monospace;
+
+    /* v1.3: Typography tokens. All user-tunable via the Themes panel.
+       font-scale multiplies body's font-size (cascades to inheriting
+       elements). line-height / letter-spacing / font-weight apply
+       globally to body text. Fine-grained labels (badges, chrome) that
+       set explicit px stay fixed for layout stability. */
+    --font-scale:       1;
+    --line-height:      1.5;
+    --letter-spacing:   0em;
+    --font-weight-body: 400;
+
+    /* v1.3: Glass tokens. glass-blur is the backdrop-filter amount on
+       cards; glass-tint is the card background opacity (1 = opaque,
+       0.7 = frosted, reveals gradient behind). Off by default so cards
+       stay solid until the user opts in. --bg-1-rgb is the RGB triple
+       of --bg-1 so we can compose rgba() from it. Light theme overrides
+       this below. */
+    --glass-blur: 0px;
+    --glass-tint: 1;
+    --bg-1-rgb:   20, 20, 27;    /* matches --bg-1 #14141b */
+
+    /* v1.3: Layered shadow tokens. Replaces the single flat 12px drop
+       with a composite (close + far) so depth reads crisp at any
+       background. Overridable per-theme for light mode. */
+    --shadow-card:
+      0 1px 2px rgba(0, 0, 0, 0.30),
+      0 8px 24px rgba(0, 0, 0, 0.28);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
@@ -136,6 +163,13 @@
     /* top = 32 (title bar) + 16 (gutter); left = 52 (sidebar) + 20;
        right = 44 (themebar) + 20; bottom snug. */
     padding: 48px 64px 20px 72px;
+    /* v1.3: typography tokens cascade from body to anything that
+       doesn't explicitly override. Font-scale multiplies the 14px
+       base. Line-height + letter-spacing + weight apply globally. */
+    font-size:      calc(14px * var(--font-scale));
+    line-height:    var(--line-height);
+    letter-spacing: var(--letter-spacing);
+    font-weight:    var(--font-weight-body);
     /* Establish a stacking context so the canvas FX pseudos
        (body::before for noise, body::after for gradient) can sit at
        z-index: -1 — above body's own bg but below every child, so
@@ -143,6 +177,15 @@
        surfaces themselves. */
     position: relative;
     z-index: 0;
+  }
+
+  /* v1.3: Dyslexia-friendly font override. Verdana has a wide x-height
+     and distinct character shapes — the most widely-researched benefit
+     for dyslexic readers among fonts universally available on Windows.
+     Applied via attribute so the user's existing Inter stack stays
+     intact when the toggle is off. */
+  html[data-dyslexia="on"] {
+    --font: Verdana, 'Atkinson Hyperlegible', 'Segoe UI', sans-serif;
   }
 
   /* =================================================================
@@ -712,15 +755,17 @@
     --text-2:    #3a3c44;
     --text-3:    #65676f;
     --text-4:    #8d8f98;
+    /* v1.3: light-mode overrides for glass composition. */
+    --bg-1-rgb:  243, 244, 247;
+    --shadow-card:
+      0 1px 2px rgba(0, 0, 0, 0.05),
+      0 8px 20px rgba(0, 0, 0, 0.08);
   }
   /* Light-mode-specific component overrides. The base rules use heavy
      drop shadows + white-on-dark accents that read wrong on a light
      bg. Toning them down here keeps the effect gentle. */
-  html[data-theme="light"] .card {
-    box-shadow:
-      0 1px 3px rgba(0, 0, 0, 0.06),
-      0 0 0 1px rgba(0, 0, 0, 0.02);
-  }
+  /* Card shadow now driven by --shadow-card token (set per-theme in
+     :root and html[data-theme="light"]). No per-card override needed. */
   html[data-theme="light"] .sidebar,
   html[data-theme="light"] .themebar {
     box-shadow: none;
@@ -840,10 +885,20 @@
 
   .card {
     width: 100%; max-width: 720px;
-    background: var(--bg-1); border: 1px solid var(--border);
+    /* v1.3: card bg composed from --bg-1-rgb + --glass-tint so glass
+       mode can dial opacity without losing the theme's base color.
+       backdrop-filter blurs whatever sits behind the card — the
+       gradient mesh, the film grain, etc. Tint=1 + blur=0 matches
+       the pre-v1.3 solid look exactly. */
+    background: rgba(var(--bg-1-rgb), var(--glass-tint));
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    border: 1px solid var(--border);
     border-radius: 14px; padding: var(--card-pad); margin-bottom: 16px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-    transition: padding 0.2s;
+    /* v1.3: layered shadow (close + far). --shadow-card token lets
+       light theme override with softer values. */
+    box-shadow: var(--shadow-card);
+    transition: padding 0.2s, background 0.3s, backdrop-filter 0.3s;
   }
   /* "Hide keyboard hints" setting. Hides the Enter/Ctrl+V/Ctrl+Enter
      helper line at the bottom of the URL card for a cleaner look. */
@@ -1852,7 +1907,7 @@
 
       <section class="sb-section">
         <h3>Settings</h3>
-        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.2.2</div>
+        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.3</div>
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
@@ -2031,6 +2086,82 @@
           <span class="theme-toggle" id="grad-animate-toggle" onclick="toggleGradientAnimate()" role="switch" aria-label="Animated drift"></span>
         </div>
         <p class="theme-hint">Slow ~40 s orbit — colors drift gently like a lava lamp. Off by default.</p>
+      </section>
+
+      <!-- ======== TYPOGRAPHY ========
+           Size / line-height / spacing sliders, weight picker, and
+           the dyslexia-friendly font toggle. Driven by CSS custom
+           properties set on <html>; no per-element overrides. -->
+      <section class="theme-section">
+        <h3>Typography</h3>
+        <div class="theme-slider-row">
+          <label>Size</label>
+          <input type="range" class="theme-slider" id="type-size"
+                 min="85" max="120" step="5" value="100"
+                 oninput="setFontScale(this.value)">
+          <span class="theme-slider-val" id="type-size-val">100%</span>
+        </div>
+        <div class="theme-slider-row">
+          <label>Line</label>
+          <input type="range" class="theme-slider" id="type-line"
+                 min="130" max="170" step="5" value="150"
+                 oninput="setLineHeight(this.value)">
+          <span class="theme-slider-val" id="type-line-val">1.5</span>
+        </div>
+        <div class="theme-slider-row">
+          <label>Spacing</label>
+          <input type="range" class="theme-slider" id="type-spacing"
+                 min="0" max="40" step="5" value="0"
+                 oninput="setLetterSpacing(this.value)">
+          <span class="theme-slider-val" id="type-spacing-val">0</span>
+        </div>
+        <div class="theme-presets three" id="weight-presets" style="margin-top: 12px;">
+          <button class="preset-card" data-weight="300" onclick="setFontWeight('300')">
+            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:300;font-size:18px;color:var(--text-2);">Aa</div>
+            <span class="preset-label">Light</span>
+          </button>
+          <button class="preset-card" data-weight="400" onclick="setFontWeight('400')">
+            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:400;font-size:18px;color:var(--text-2);">Aa</div>
+            <span class="preset-label">Regular</span>
+          </button>
+          <button class="preset-card" data-weight="500" onclick="setFontWeight('500')">
+            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:500;font-size:18px;color:var(--text-2);">Aa</div>
+            <span class="preset-label">Medium</span>
+          </button>
+        </div>
+        <div class="theme-toggle-row" style="margin-top: 12px;">
+          <span>Dyslexia-friendly</span>
+          <span class="theme-toggle" id="type-dyslexia-toggle" onclick="toggleDyslexia()" role="switch" aria-label="Dyslexia-friendly font"></span>
+        </div>
+        <p class="theme-hint">Swaps to Verdana — wide x-height and distinct letterforms. Easier to read for many dyslexic users.</p>
+      </section>
+
+      <!-- ======== GLASS ========
+           Frosted-card effect. Off by default (cards stay opaque).
+           As intensity climbs the cards become translucent and gain
+           backdrop-blur so gradient / noise behind them show through.
+           Works best with a gradient enabled. -->
+      <section class="theme-section">
+        <h3>Glass</h3>
+        <div class="theme-presets" id="glass-presets">
+          <button class="preset-card" data-glass="off" onclick="setGlassMode('off')">
+            <div class="preset-preview" style="background:var(--bg-1);"></div>
+            <span class="preset-label">Off</span>
+          </button>
+          <button class="preset-card" data-glass="subtle" onclick="setGlassMode('subtle')">
+            <div class="preset-preview" style="background:linear-gradient(135deg,rgba(var(--accent-rgb),0.25),rgba(255,255,255,0.05)),rgba(var(--bg-1-rgb),0.85);backdrop-filter:blur(6px);"></div>
+            <span class="preset-label">Subtle</span>
+          </button>
+          <button class="preset-card" data-glass="medium" onclick="setGlassMode('medium')">
+            <div class="preset-preview" style="background:linear-gradient(135deg,rgba(var(--accent-rgb),0.4),rgba(255,255,255,0.08)),rgba(var(--bg-1-rgb),0.7);backdrop-filter:blur(10px);"></div>
+            <span class="preset-label">Medium</span>
+          </button>
+          <button class="preset-card" data-glass="heavy" onclick="setGlassMode('heavy')">
+            <div class="preset-preview" style="background:linear-gradient(135deg,rgba(var(--accent-rgb),0.55),rgba(255,255,255,0.12)),rgba(var(--bg-1-rgb),0.55);backdrop-filter:blur(16px);"></div>
+            <span class="preset-label">Heavy</span>
+          </button>
+        </div>
+        <p class="theme-hint">Frosts the cards so whatever's behind bleeds through. Works best with a gradient on.</p>
       </section>
     </div>
   </aside>
@@ -2361,6 +2492,14 @@
     gradientPreset:    'off', // off | aurora | sunset | ocean | plum | ember | mono | accent
     gradientIntensity: 40,    // 0-100 — overlay opacity %
     gradientAnimate:   false, // slow drift animation
+    // v1.3: Typography.
+    fontScale:      100,      // 85..120 — percentage of 14px body base
+    lineHeight:     150,      // 130..170 — stored x100, divided at apply
+    letterSpacing:  0,        // 0..40 — stored x1000 of em, divided at apply
+    fontWeight:     '400',    // '300' | '400' | '500'
+    dyslexiaFont:   false,    // swap --font to Verdana stack
+    // v1.3: Glass.
+    glassMode:      'off',    // off | subtle | medium | heavy
   };
 
   function loadSettings() {
@@ -2687,14 +2826,109 @@
     _syncGradientUI();
   }
 
+  // ----- Typography (v1.3) -----
+  // Font scale / line / spacing / weight / dyslexia-friendly font.
+  // All driven by CSS custom properties set on <html> so one data-*
+  // change repaints every inheriting element.
+  function applyTypography() {
+    const root = document.documentElement;
+    const scale   = (+SETTINGS.fontScale || 100) / 100;
+    const line    = (+SETTINGS.lineHeight || 150) / 100;
+    const spacing = (+SETTINGS.letterSpacing || 0) / 1000; // em
+    const weight  = SETTINGS.fontWeight || '400';
+    root.style.setProperty('--font-scale',       scale.toFixed(2));
+    root.style.setProperty('--line-height',      line.toFixed(2));
+    root.style.setProperty('--letter-spacing',   spacing.toFixed(3) + 'em');
+    root.style.setProperty('--font-weight-body', weight);
+    root.setAttribute('data-dyslexia', SETTINGS.dyslexiaFont ? 'on' : 'off');
+  }
+  function _syncTypographyUI() {
+    const s   = document.getElementById('type-size');
+    const sV  = document.getElementById('type-size-val');
+    const l   = document.getElementById('type-line');
+    const lV  = document.getElementById('type-line-val');
+    const sp  = document.getElementById('type-spacing');
+    const spV = document.getElementById('type-spacing-val');
+    if (s)   s.value  = SETTINGS.fontScale;
+    if (sV)  sV.textContent = SETTINGS.fontScale + '%';
+    if (l)   l.value  = SETTINGS.lineHeight;
+    if (lV)  lV.textContent = ((+SETTINGS.lineHeight || 150) / 100).toFixed(2);
+    if (sp)  sp.value = SETTINGS.letterSpacing;
+    if (spV) spV.textContent = SETTINGS.letterSpacing === 0 ? '0' : '+' + SETTINGS.letterSpacing;
+    _paintPresetGroup('weight-presets', 'weight', String(SETTINGS.fontWeight || '400'));
+    const t = document.getElementById('type-dyslexia-toggle');
+    if (t) t.classList.toggle('on', !!SETTINGS.dyslexiaFont);
+  }
+  function setFontScale(val) {
+    SETTINGS.fontScale = +val;
+    saveSettings(SETTINGS);
+    applyTypography();
+    _syncTypographyUI();
+  }
+  function setLineHeight(val) {
+    SETTINGS.lineHeight = +val;
+    saveSettings(SETTINGS);
+    applyTypography();
+    _syncTypographyUI();
+  }
+  function setLetterSpacing(val) {
+    SETTINGS.letterSpacing = +val;
+    saveSettings(SETTINGS);
+    applyTypography();
+    _syncTypographyUI();
+  }
+  function setFontWeight(w) {
+    SETTINGS.fontWeight = String(w);
+    saveSettings(SETTINGS);
+    applyTypography();
+    _syncTypographyUI();
+  }
+  function toggleDyslexia() {
+    SETTINGS.dyslexiaFont = !SETTINGS.dyslexiaFont;
+    saveSettings(SETTINGS);
+    applyTypography();
+    _syncTypographyUI();
+  }
+
+  // ----- Glass (v1.3) -----
+  // Four modes: off / subtle / medium / heavy. Each maps to a (blur,
+  // tint) pair — tint is the card bg opacity (1 = opaque, lower =
+  // more transparent), blur is backdrop-filter radius.
+  const _GLASS = {
+    off:    { blur: '0px',  tint: '1'    },
+    subtle: { blur: '8px',  tint: '0.85' },
+    medium: { blur: '16px', tint: '0.7'  },
+    heavy:  { blur: '24px', tint: '0.55' },
+  };
+  function applyGlass() {
+    const mode = SETTINGS.glassMode || 'off';
+    const cfg  = _GLASS[mode] || _GLASS.off;
+    const root = document.documentElement.style;
+    root.setProperty('--glass-blur', cfg.blur);
+    root.setProperty('--glass-tint', cfg.tint);
+  }
+  function _syncGlassUI() {
+    _paintPresetGroup('glass-presets', 'glass', SETTINGS.glassMode || 'off');
+  }
+  function setGlassMode(mode) {
+    SETTINGS.glassMode = mode;
+    saveSettings(SETTINGS);
+    applyGlass();
+    _syncGlassUI();
+  }
+
   // One-shot: apply everything + paint every control. Called on boot
   // and whenever the themebar opens so stored values always match
   // what the user sees.
   function applyThemebar() {
     applyBackground();
     applyGradient();
+    applyTypography();
+    applyGlass();
     _syncBackgroundUI();
     _syncGradientUI();
+    _syncTypographyUI();
+    _syncGlassUI();
   }
 
   // Alias for backwards-compatibility with existing call sites that
@@ -2748,11 +2982,14 @@
   applyAccentHex(SETTINGS.accentHex);
   applyUISettings();
   applyThemeMode(SETTINGS.themeMode || 'dark');
-  // Themebar personalization (background/gradient) — apply the raw
-  // data-* attrs immediately so there's no flash-of-default-theme.
-  // UI sync runs after DOM is parsed; elements don't exist yet here.
+  // Themebar personalization (background/gradient/typography/glass) —
+  // apply the raw data-* attrs immediately so there's no flash of
+  // default theme. UI sync runs after DOM is parsed; elements don't
+  // exist yet here.
   applyBackground();
   applyGradient();
+  applyTypography();
+  applyGlass();
 
   // ---------------------------------------------------------------------------
   // Format mode (video vs audio) -- show the right extras
