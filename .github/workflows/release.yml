@@ -1,0 +1,63 @@
+name: Release from README
+
+# Whenever a vX.X tag is pushed, extract the matching "### vX.X" section
+# out of README.md and post it as the body of a GitHub Release. Result:
+# the Releases tab fills itself in automatically every time you ship.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract changelog section from README.md
+        id: extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF##*/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Find the heading line for this tag (e.g. "### v1.3 - Typography + Glass (2026-04)")
+          HEADING=$(grep -m1 -E "^### ${TAG}( |$)" README.md || true)
+          if [ -z "$HEADING" ]; then
+            echo "::error::No '### ${TAG}' heading found in README.md"
+            exit 1
+          fi
+          NAME="${HEADING#### }"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+          # Slice from heading to the next "### vX" heading
+          awk -v tag="$TAG" '
+            $0 ~ ("^### " tag "$") || $0 ~ ("^### " tag " ")  { capture=1; next }
+            capture && /^### v[0-9]/                          { exit }
+            capture                                            { print }
+          ' README.md | sed -e '/./,$!d' -e :a -e '/^$/{$d;N;ba' -e '}' > release_body.md
+
+          if [ ! -s release_body.md ]; then
+            echo "::error::Extracted empty body for ${TAG}"
+            exit 1
+          fi
+
+          echo "--- Release body preview ---"
+          cat release_body.md
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.extract.outputs.tag }}
+          name: ${{ steps.extract.outputs.name }}
+          body_path: release_body.md
+          draft: false
+          prerelease: false
+          make_latest: true

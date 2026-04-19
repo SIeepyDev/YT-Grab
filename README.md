@@ -2,7 +2,11 @@
 
 A clean, local-first YouTube downloader for Windows. Native desktop window, premium dark UI, no tracking, no ads, no uploads. Your videos stay on your machine.
 
-![status: beta](https://img.shields.io/badge/status-beta-orange) ![windows only](https://img.shields.io/badge/windows-only-blue) ![license: MIT](https://img.shields.io/badge/license-MIT-green)
+![status: beta](https://img.shields.io/badge/status-beta-orange)
+![windows only](https://img.shields.io/badge/windows-only-blue)
+![license: MIT](https://img.shields.io/badge/license-MIT-green)
+[![latest release](https://img.shields.io/github/v/release/SIeepyDev/yt-grab?label=release&color=purple)](https://github.com/SIeepyDev/yt-grab/releases/latest)
+![release date](https://img.shields.io/github/release-date/SIeepyDev/yt-grab?color=blueviolet)
 
 ## Features
 
@@ -61,12 +65,28 @@ Windows 11's Smart App Control (SAC) blocks unsigned PyInstaller binaries on som
 | `build.bat` + `build_icon.py` | Build pipeline for the .exe. |
 | `package.bat` | Wraps exe + source fallback into a shippable zip. |
 | `clean.bat` | Factory reset — wipes venv, dist, bin, downloads, history. |
+| `ship.ps1` | One-shot release: detects version in `index.html`, pulls matching README changelog, commits + tags + pushes. |
+| `backfill_tags.ps1` | One-time retroactive tagger — walks `git log`, tags every `vX.X:` commit, pushes. |
+| `.github/workflows/release.yml` | Runs on any `v*` tag push: extracts the matching README section and creates a GitHub Release automatically. |
 | `downloads/` | User-facing output. Per-video folders with the main file + optional sidecars. |
 | `history.json` | Current on-disk downloads. |
 | `activity.json` | Log of everything ever downloaded (including deleted). |
 | `settings.json` | User preferences from the settings panel. |
 
 ## Architecture
+
+```mermaid
+flowchart LR
+    User([User]) -->|paste URL| WebView[WebView2<br/>native window]
+    WebView <-->|/api/* JSON| Flask[Flask server<br/>localhost:8765]
+    Flask -->|extract| YTDLP[yt-dlp]
+    YTDLP -.->|stream| YouTube[(YouTube CDN)]
+    YTDLP --> FFMPEG[ffmpeg + ffprobe<br/>transcode · embed · thumbnail]
+    FFMPEG --> Output[downloads/<br/>per-video folders]
+    Flask <--> State[(history.json<br/>activity.json<br/>settings.json)]
+    Flask -->|send2trash| RecycleBin[Recycle Bin]
+    Flask -->|Shell.Application| Explorer[File Explorer]
+```
 
 - **Flask** serves `/api/*` JSON endpoints on `localhost:8765`.
 - **pywebview + WebView2** wraps the page as a native desktop window (no Chrome dependency, own taskbar identity).
@@ -76,6 +96,15 @@ Windows 11's Smart App Control (SAC) blocks unsigned PyInstaller binaries on som
 - **comtypes** + Shell.Application COM powers the "reuse existing Explorer window" behavior when you hit Open.
 
 The Flask server runs in a background thread; the main thread is pywebview. A heartbeat loop on the frontend + `navigator.sendBeacon('/api/shutdown')` on tab close means closing the window exits the process — no zombies.
+
+## Shipping a new version
+
+1. Bump the version string in `index.html` (search for `YT Grab v`).
+2. Add a `### vX.X — Title (YYYY-MM)` section to the top of the Changelog below with the details of the release.
+3. Double-click `ship.ps1`. It reads the version, pulls the matching changelog block, commits, tags, and pushes everything in one shot.
+4. GitHub Actions picks up the tag and creates a full GitHub Release at `/releases/tag/vX.X` with the changelog as the body — no manual release creation needed.
+
+First-time setup: run `backfill_tags.ps1` once to retroactively tag every historical `vX.X:` commit and push them all at once. The Release Action fires per tag, so the Releases page fills in automatically with the full project history.
 
 ## Privacy
 
