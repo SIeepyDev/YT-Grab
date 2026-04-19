@@ -129,6 +129,31 @@ Built by [SleepyDev](https://github.com/SIeepyDev). Part of the Luna workspace t
 
 ## Changelog
 
+### v1.4 — Saved Views + Command Palette (2026-04)
+
+The themebar grew to ten dials over v1.2 and v1.3. v1.4 is the personalization release: save any combination of those dials as a reusable "view," open a command palette to hit anything from the keyboard, and flip on a high-contrast mode for readability.
+
+**Saved Views**
+- New Themes panel section. Four built-in presets — **Default** (clean slate), **Reading** (larger text, looser line-height, gradient off), **Ambient** (accent gradient + medium glass + animated drift), **Focus** (graphite background, nothing moving, nothing frosted).
+- **Save current view** button captures every themebar setting (theme mode, background, gradient, typography, glass, high-contrast) as a named snapshot.
+- Custom presets are deletable via the X on hover. Built-ins are immutable.
+- Each card previews its own mesh gradient at its own intensity — what you see is what you'll get when you click it.
+
+**Command palette (Ctrl+K)**
+- New keyboard-driven launcher. Fuzzy-matches every themebar control, every saved view, and common actions (paste URL, load info, open downloads folder, undo delete, clear history, focus URL input, show shortcuts).
+- Arrow keys navigate, Enter executes, Esc closes. Hover or click works too.
+- Grouped by section (Theme, Background, Gradient, Typography, Glass, Accessibility, Views, Actions, Navigate) so results stay scannable even at a glance.
+- Frosted backdrop, scale-in transition, centered 560 px modal — matches the v1.3 glass aesthetic.
+
+**Accessibility**
+- New **High contrast** toggle in the themebar. Flips `html[data-contrast="high"]`, which kills gradient + glass, thickens all borders to 2 px, and bumps hint text from `--text-4` to `--text-2`. Pairs with the Dyslexia-friendly font for a maximum-readability configuration.
+- **Focus rings** now use `:focus-visible` consistently across every interactive surface (buttons, inputs, preset cards, view cards, toggles, palette items). Invisible for mouse users, visible for keyboard users. 2 px ring normally, 3 px in high-contrast mode.
+
+**Under the hood**
+- `VIEW_KEYS` defines the "what counts as a look" contract in one place — views capture exactly these keys, so adding a new themebar dial later is a one-line addition.
+- Command registry rebuilt on every palette open so dynamic items (user-created views, newly-added actions) stay current.
+- `_cmdkScore` is a simple substring-plus-word-break ranker. No fuzzy-match dependency, no token index — it's fast enough at the 40-command scale and easy to read.
+
 ### v1.3 — Typography + Glass (2026-04)
 
 Two new themebar sections. The theme system is now less "pick a color" and more "dial in a reading environment."

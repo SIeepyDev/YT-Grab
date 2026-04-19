@@ -1741,6 +1741,260 @@
     border: 1px solid var(--border-2); border-radius: 3px;
     font-family: var(--mono); font-size: 10px; color: var(--text-3);
   }
+
+  /* ============================================================
+     v1.4: Saved View Presets
+     ------------------------------------------------------------
+     A snapshot-and-recall mechanism for the whole themebar. A
+     preset captures every personalization setting (theme mode,
+     background, gradient, typography, glass, accent) and applies
+     them atomically on click. Built-in presets are read-only;
+     user-created ones can be deleted via the X on the card. */
+  .view-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .view-card {
+    position: relative;
+    padding: 8px 8px 10px;
+    background: var(--bg-2);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s, background 0.15s;
+    display: flex; flex-direction: column; gap: 6px;
+    text-align: left;
+    overflow: hidden;
+  }
+  .view-card:hover { background: var(--bg-3); transform: translateY(-1px); }
+  .view-card.active { border-color: var(--accent); background: var(--accent-subtle); }
+  .view-card .view-swatch {
+    height: 34px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-3);
+    position: relative;
+    overflow: hidden;
+  }
+  .view-card .view-swatch::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: var(--view-mesh, none);
+    opacity: var(--view-mesh-a, 0);
+    mix-blend-mode: screen;
+  }
+  .view-card .view-name {
+    font-size: 11px; font-weight: 600;
+    color: var(--text-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .view-card.active .view-name { color: var(--accent); }
+  .view-card .view-sub {
+    font-size: 9px; color: var(--text-4);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .view-card .view-del {
+    position: absolute; top: 4px; right: 4px;
+    width: 18px; height: 18px;
+    border: none;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.35);
+    color: var(--text-3);
+    font-size: 11px; line-height: 1;
+    cursor: pointer;
+    opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .view-card:hover .view-del { opacity: 1; }
+  .view-card .view-del:hover { background: var(--danger); color: #fff; }
+  .view-save-btn {
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--bg-2);
+    border: 1px dashed var(--border-2);
+    border-radius: 8px;
+    color: var(--text-3);
+    font-size: 11px; font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+  }
+  .view-save-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-subtle);
+  }
+
+  /* ============================================================
+     v1.4: High-contrast mode
+     ------------------------------------------------------------
+     Kills gradient + glass, boosts border weight and text/bg
+     contrast across the board. Intended for users who want
+     maximum readability regardless of aesthetic. */
+  html[data-contrast="high"] {
+    --glass-blur: 0px !important;
+    --glass-tint: 1 !important;
+  }
+  html[data-contrast="high"] #bg-gradient-layer,
+  html[data-contrast="high"] #bg-noise-layer { display: none !important; }
+  html[data-contrast="high"] .card {
+    border: 2px solid var(--text-3) !important;
+    background: var(--bg-1) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  html[data-contrast="high"] .ghost-btn,
+  html[data-contrast="high"] .preset-card,
+  html[data-contrast="high"] .view-card,
+  html[data-contrast="high"] .theme-toggle,
+  html[data-contrast="high"] input,
+  html[data-contrast="high"] select,
+  html[data-contrast="high"] textarea {
+    border-width: 2px !important;
+    border-color: var(--text-3) !important;
+  }
+  html[data-contrast="high"] .hint,
+  html[data-contrast="high"] .theme-hint { color: var(--text-2) !important; }
+
+  /* ============================================================
+     v1.4: Focus rings (keyboard users only, via :focus-visible)
+     ------------------------------------------------------------
+     One consistent ring across every interactive surface. Hidden
+     for mouse clicks (browsers handle :focus-visible correctly),
+     visible on Tab / arrow key navigation. */
+  :focus { outline: none; }
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [role="switch"]:focus-visible,
+  [role="button"]:focus-visible,
+  .preset-card:focus-visible,
+  .view-card:focus-visible,
+  .theme-toggle:focus-visible,
+  .cmdk-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  html[data-contrast="high"] button:focus-visible,
+  html[data-contrast="high"] a:focus-visible,
+  html[data-contrast="high"] input:focus-visible,
+  html[data-contrast="high"] select:focus-visible,
+  html[data-contrast="high"] textarea:focus-visible,
+  html[data-contrast="high"] [role="switch"]:focus-visible,
+  html[data-contrast="high"] .preset-card:focus-visible,
+  html[data-contrast="high"] .view-card:focus-visible,
+  html[data-contrast="high"] .theme-toggle:focus-visible,
+  html[data-contrast="high"] .cmdk-item:focus-visible {
+    outline-width: 3px;
+    outline-offset: 3px;
+  }
+
+  /* ============================================================
+     v1.4: Command palette (Ctrl+K)
+     ------------------------------------------------------------
+     A keyboard-driven launcher for every themebar control and
+     every app action. Fuzzy-matches against label + keywords.
+     Frosted backdrop matches v1.3 glass aesthetic. */
+  .cmdk-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px) saturate(1.2);
+    -webkit-backdrop-filter: blur(6px) saturate(1.2);
+    z-index: 2000;
+    display: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .cmdk-backdrop.open { display: flex; opacity: 1; }
+  .cmdk-modal {
+    width: min(560px, 92vw);
+    max-height: 70vh;
+    margin: 14vh auto 0;
+    background: rgba(var(--bg-1-rgb), 0.92);
+    backdrop-filter: blur(24px) saturate(1.3);
+    -webkit-backdrop-filter: blur(24px) saturate(1.3);
+    border: 1px solid var(--border-2);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.5),
+                0 2px 8px rgba(0,0,0,0.25);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    transform: translateY(-6px) scale(0.985);
+    transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .cmdk-backdrop.open .cmdk-modal { transform: translateY(0) scale(1); }
+  .cmdk-input-wrap {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cmdk-input-wrap svg {
+    width: 16px; height: 16px;
+    color: var(--text-3);
+    flex-shrink: 0;
+  }
+  .cmdk-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 15px;
+    font-family: inherit;
+    outline: none;
+  }
+  .cmdk-input::placeholder { color: var(--text-4); }
+  .cmdk-hint {
+    font-size: 10px;
+    color: var(--text-4);
+    font-family: var(--mono);
+    white-space: nowrap;
+  }
+  .cmdk-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .cmdk-results::-webkit-scrollbar { width: 6px; }
+  .cmdk-results::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+  .cmdk-section {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-4);
+    padding: 10px 18px 4px;
+  }
+  .cmdk-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 18px;
+    cursor: pointer;
+    color: var(--text-2);
+    font-size: 13px;
+    border-left: 2px solid transparent;
+  }
+  .cmdk-item:hover { background: var(--bg-2); }
+  .cmdk-item.selected {
+    background: var(--accent-subtle);
+    border-left-color: var(--accent);
+    color: var(--text);
+  }
+  .cmdk-item .cmdk-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cmdk-item .cmdk-meta {
+    font-size: 10px;
+    color: var(--text-4);
+    font-family: var(--mono);
+  }
+  .cmdk-empty {
+    padding: 28px 18px;
+    text-align: center;
+    color: var(--text-4);
+    font-size: 12px;
+  }
 </style>
 </head>
 <body>
@@ -1907,7 +2161,7 @@
 
       <section class="sb-section">
         <h3>Settings</h3>
-        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.3</div>
+        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.4</div>
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
@@ -2163,8 +2417,49 @@
         </div>
         <p class="theme-hint">Frosts the cards so whatever's behind bleeds through. Works best with a gradient on.</p>
       </section>
+
+      <!-- ======== VIEWS (v1.4) ========
+           Saved snapshots of every themebar setting. Built-ins are
+           read-only (Default, Reading, Ambient). User presets are
+           created from the current state via "Save current view"
+           and can be deleted via the X on hover. Applying a preset
+           swaps every theme setting atomically. -->
+      <section class="theme-section">
+        <h3>Views</h3>
+        <div class="view-grid" id="view-grid"></div>
+        <button class="view-save-btn" onclick="saveCurrentView()">+ Save current view</button>
+        <p class="theme-hint">One-click swap of every Themes setting. Great for switching between "reading," "demo," and "get out of my way."</p>
+      </section>
+
+      <!-- ======== ACCESSIBILITY (v1.4) ========
+           High-contrast toggle. When on: gradient + glass off,
+           borders thicken, hint text darkens. Focus-ring pass is
+           global (no UI needed, handled by :focus-visible CSS). -->
+      <section class="theme-section">
+        <h3>Accessibility</h3>
+        <div class="theme-toggle-row">
+          <span>High contrast</span>
+          <span class="theme-toggle" id="contrast-toggle" onclick="toggleHighContrast()" role="switch" aria-label="High contrast mode"></span>
+        </div>
+        <p class="theme-hint">Turns off gradient and glass, thickens borders, boosts text contrast. Pairs with the Dyslexia-friendly font for max readability.</p>
+      </section>
     </div>
   </aside>
+
+  <!-- ======== COMMAND PALETTE (v1.4) ========
+       Ctrl+K (or Cmd+K) opens this. Fuzzy-searches every themebar
+       control + every app action + every saved view. Arrow keys
+       navigate, Enter executes, Esc closes. -->
+  <div class="cmdk-backdrop" id="cmdk-backdrop" onclick="if(event.target===this)closeCmdk()">
+    <div class="cmdk-modal" role="dialog" aria-label="Command palette">
+      <div class="cmdk-input-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input type="text" class="cmdk-input" id="cmdk-input" placeholder="Search commands…" autocomplete="off" spellcheck="false">
+        <span class="cmdk-hint">Esc to close</span>
+      </div>
+      <div class="cmdk-results" id="cmdk-results"></div>
+    </div>
+  </div>
 
   <!-- ========================================================
        3-column page layout.
@@ -2500,6 +2795,12 @@
     dyslexiaFont:   false,    // swap --font to Verdana stack
     // v1.3: Glass.
     glassMode:      'off',    // off | subtle | medium | heavy
+    // v1.4: Saved view presets — array of { id, name, settings }.
+    // Built-ins are not stored here; they live in BUILTIN_VIEWS.
+    viewPresets:    [],
+    activeViewId:   null,     // last-applied preset id (for active highlight)
+    // v1.4: Accessibility.
+    highContrast:   false,    // flips html[data-contrast="high"]
   };
 
   function loadSettings() {
@@ -2917,6 +3218,457 @@
     _syncGlassUI();
   }
 
+  // ----- High contrast (v1.4) -----
+  // One attribute flip on <html>. CSS in v1.4 block handles all the
+  // overrides (thicker borders, gradient + glass off, hint text
+  // bumped up to --text-2).
+  function applyHighContrast() {
+    document.documentElement.setAttribute(
+      'data-contrast', SETTINGS.highContrast ? 'high' : 'normal'
+    );
+  }
+  function _syncHighContrastUI() {
+    const t = document.getElementById('contrast-toggle');
+    if (t) t.classList.toggle('on', !!SETTINGS.highContrast);
+  }
+  function toggleHighContrast() {
+    SETTINGS.highContrast = !SETTINGS.highContrast;
+    saveSettings(SETTINGS);
+    applyHighContrast();
+    _syncHighContrastUI();
+  }
+
+  // ----- Saved View Presets (v1.4) -----
+  // A "view" is a snapshot of every themebar setting. Applying one
+  // mutates SETTINGS, re-runs every applier, and paints the
+  // highlighted card. Built-in views are immutable; user views live
+  // in SETTINGS.viewPresets and can be deleted.
+  //
+  // View snapshot schema — the subset of SETTINGS we consider part
+  // of "the look." We intentionally EXCLUDE accent color: accent is
+  // already a first-class picker, and preserving it across views
+  // feels more natural than having every view override it.
+  const VIEW_KEYS = [
+    'themeMode',
+    'bgPreset', 'bgNoise',
+    'gradientPreset', 'gradientIntensity', 'gradientAnimate',
+    'fontScale', 'lineHeight', 'letterSpacing', 'fontWeight', 'dyslexiaFont',
+    'glassMode',
+    'highContrast',
+  ];
+
+  // Built-in presets. Each is a partial snapshot; unspecified keys
+  // fall back to the current SETTINGS value at apply time, so e.g.
+  // theme mode persists if not explicitly set by the view.
+  const BUILTIN_VIEWS = [
+    {
+      id: 'builtin:default',
+      name: 'Default',
+      sub: 'Clean slate',
+      settings: {
+        bgPreset: '', bgNoise: false,
+        gradientPreset: 'off', gradientIntensity: 40, gradientAnimate: false,
+        fontScale: 100, lineHeight: 150, letterSpacing: 0,
+        fontWeight: '400', dyslexiaFont: false,
+        glassMode: 'off',
+        highContrast: false,
+      },
+    },
+    {
+      id: 'builtin:reading',
+      name: 'Reading',
+      sub: 'Comfortable',
+      settings: {
+        bgPreset: '', bgNoise: false,
+        gradientPreset: 'off', gradientIntensity: 20, gradientAnimate: false,
+        fontScale: 115, lineHeight: 165, letterSpacing: 10,
+        fontWeight: '400', dyslexiaFont: false,
+        glassMode: 'off',
+        highContrast: false,
+      },
+    },
+    {
+      id: 'builtin:ambient',
+      name: 'Ambient',
+      sub: 'Showy',
+      settings: {
+        bgPreset: 'void', bgNoise: true,
+        gradientPreset: 'accent', gradientIntensity: 70, gradientAnimate: true,
+        fontScale: 100, lineHeight: 150, letterSpacing: 0,
+        fontWeight: '400', dyslexiaFont: false,
+        glassMode: 'medium',
+        highContrast: false,
+      },
+    },
+    {
+      id: 'builtin:focus',
+      name: 'Focus',
+      sub: 'Distraction-free',
+      settings: {
+        bgPreset: 'graphite', bgNoise: false,
+        gradientPreset: 'off', gradientIntensity: 0, gradientAnimate: false,
+        fontScale: 100, lineHeight: 150, letterSpacing: 0,
+        fontWeight: '400', dyslexiaFont: false,
+        glassMode: 'off',
+        highContrast: false,
+      },
+    },
+  ];
+
+  function _allViews() {
+    return BUILTIN_VIEWS.concat(SETTINGS.viewPresets || []);
+  }
+
+  // Tiny ID helper. Not trying to be crypto-strong — just unique
+  // within a single user's preset array.
+  function _viewId() {
+    return 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  function applyViewPreset(id) {
+    const view = _allViews().find(v => v.id === id);
+    if (!view) return;
+    // Merge view settings into current SETTINGS so omitted keys stay.
+    Object.assign(SETTINGS, view.settings);
+    SETTINGS.activeViewId = id;
+    saveSettings(SETTINGS);
+    // Re-run every applier. These internally read SETTINGS, so one
+    // apply pass is enough.
+    applyThemeMode(SETTINGS.themeMode || 'dark');
+    applyBackground();
+    applyGradient();
+    applyTypography();
+    applyGlass();
+    applyHighContrast();
+    _syncBackgroundUI();
+    _syncGradientUI();
+    _syncTypographyUI();
+    _syncGlassUI();
+    _syncHighContrastUI();
+    _syncThemeModeCards();
+    renderViews();
+    toast(`Applied "${view.name}"`, 'ok');
+  }
+
+  function saveCurrentView() {
+    const name = prompt('Name this view:');
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    // Build the snapshot by pulling only VIEW_KEYS out of SETTINGS.
+    const snapshot = {};
+    VIEW_KEYS.forEach(k => { snapshot[k] = SETTINGS[k]; });
+    const preset = { id: _viewId(), name: trimmed, sub: 'Custom', settings: snapshot };
+    if (!Array.isArray(SETTINGS.viewPresets)) SETTINGS.viewPresets = [];
+    SETTINGS.viewPresets.push(preset);
+    SETTINGS.activeViewId = preset.id;
+    saveSettings(SETTINGS);
+    renderViews();
+    toast(`Saved "${preset.name}"`, 'ok');
+  }
+
+  function deleteViewPreset(id) {
+    if (!Array.isArray(SETTINGS.viewPresets)) return;
+    const view = SETTINGS.viewPresets.find(v => v.id === id);
+    if (!view) return;
+    if (!confirm(`Delete "${view.name}"?`)) return;
+    SETTINGS.viewPresets = SETTINGS.viewPresets.filter(v => v.id !== id);
+    if (SETTINGS.activeViewId === id) SETTINGS.activeViewId = null;
+    saveSettings(SETTINGS);
+    renderViews();
+  }
+
+  // Paint a mini mesh preview on each card using the view's gradient
+  // preset + intensity. Reuses the same preset definitions that drive
+  // the main gradient, so the swatch genuinely previews the look.
+  function _viewMesh(view) {
+    const g = view.settings.gradientPreset || 'off';
+    const intensity = (view.settings.gradientIntensity || 40) / 100;
+    if (g === 'off' || intensity === 0) return { mesh: 'none', a: 0 };
+    const meshMap = {
+      aurora: 'radial-gradient(at 30% 20%, #7c3aed 0%, transparent 55%),radial-gradient(at 70% 60%, #06b6d4 0%, transparent 55%),radial-gradient(at 50% 100%, #f472b6 0%, transparent 55%)',
+      sunset: 'radial-gradient(at 20% 30%, #f59e0b 0%, transparent 55%),radial-gradient(at 80% 40%, #ef4444 0%, transparent 55%),radial-gradient(at 50% 100%, #a855f7 0%, transparent 55%)',
+      ocean:  'radial-gradient(at 20% 20%, #0ea5e9 0%, transparent 55%),radial-gradient(at 80% 70%, #10b981 0%, transparent 55%),radial-gradient(at 50% 100%, #6366f1 0%, transparent 55%)',
+      plum:   'radial-gradient(at 30% 30%, #9333ea 0%, transparent 55%),radial-gradient(at 70% 70%, #db2777 0%, transparent 55%)',
+      ember:  'radial-gradient(at 30% 20%, #dc2626 0%, transparent 55%),radial-gradient(at 70% 80%, #f59e0b 0%, transparent 55%)',
+      mono:   'radial-gradient(at 30% 30%, rgba(255,255,255,0.35) 0%, transparent 55%),radial-gradient(at 70% 70%, rgba(255,255,255,0.15) 0%, transparent 55%)',
+      accent: 'radial-gradient(at 30% 30%, var(--accent) 0%, transparent 55%),radial-gradient(at 70% 70%, var(--accent-subtle) 0%, transparent 55%)',
+    };
+    return { mesh: meshMap[g] || 'none', a: Math.min(1, intensity + 0.2) };
+  }
+
+  function renderViews() {
+    const grid = document.getElementById('view-grid');
+    if (!grid) return;
+    const activeId = SETTINGS.activeViewId;
+    grid.innerHTML = '';
+    _allViews().forEach(view => {
+      const card = document.createElement('button');
+      card.className = 'view-card' + (activeId === view.id ? ' active' : '');
+      card.type = 'button';
+      const { mesh, a } = _viewMesh(view);
+      card.style.setProperty('--view-mesh', mesh);
+      card.style.setProperty('--view-mesh-a', String(a));
+      card.onclick = () => applyViewPreset(view.id);
+
+      const swatch = document.createElement('div');
+      swatch.className = 'view-swatch';
+      card.appendChild(swatch);
+
+      const name = document.createElement('span');
+      name.className = 'view-name';
+      name.textContent = view.name;
+      card.appendChild(name);
+
+      const sub = document.createElement('span');
+      sub.className = 'view-sub';
+      sub.textContent = view.sub || '';
+      card.appendChild(sub);
+
+      // Delete button only on user-created presets.
+      if (!view.id.startsWith('builtin:')) {
+        const del = document.createElement('button');
+        del.className = 'view-del';
+        del.type = 'button';
+        del.setAttribute('aria-label', `Delete ${view.name}`);
+        del.textContent = '×';
+        del.onclick = (e) => { e.stopPropagation(); deleteViewPreset(view.id); };
+        card.appendChild(del);
+      }
+      grid.appendChild(card);
+    });
+  }
+
+  // ----- Command palette (v1.4) -----
+  // A Ctrl+K launcher. Registry is rebuilt on every open so dynamic
+  // items (user-created views, "Undo last delete" availability) stay
+  // in sync. Fuzzy match is a simple substring-across-keywords score.
+  const CMDK = {
+    items: [],       // filtered items, flat
+    groups: [],      // grouped + flat alternation for rendering
+    selected: 0,     // index into items
+    open: false,
+  };
+
+  function _cmdkBuildRegistry() {
+    const cmds = [];
+    const safeCall = (name, ...args) => () => {
+      try {
+        const fn = window[name];
+        if (typeof fn === 'function') fn(...args);
+      } catch (e) { console.warn('cmdk handler', name, e); }
+    };
+
+    // THEME MODE
+    cmds.push({ section: 'Theme', label: 'Switch to Dark mode',   keywords: 'theme dark night',   run: safeCall('setThemeMode', 'dark') });
+    cmds.push({ section: 'Theme', label: 'Switch to Light mode',  keywords: 'theme light day',    run: safeCall('setThemeMode', 'light') });
+    cmds.push({ section: 'Theme', label: 'Use System theme',      keywords: 'theme system auto os', run: safeCall('setThemeMode', 'system') });
+
+    // BACKGROUND
+    ['', 'void', 'graphite', 'midnight', 'slate', 'cream', 'snow'].forEach(bg => {
+      const name = bg === '' ? 'Default' : bg.charAt(0).toUpperCase() + bg.slice(1);
+      cmds.push({ section: 'Background', label: `Background: ${name}`, keywords: `bg background ${bg}`, run: safeCall('setBgPreset', bg) });
+    });
+    cmds.push({ section: 'Background', label: 'Toggle film grain', keywords: 'noise grain texture', run: safeCall('toggleBgNoise') });
+
+    // GRADIENT
+    ['off','aurora','sunset','ocean','plum','ember','mono','accent'].forEach(g => {
+      const name = g.charAt(0).toUpperCase() + g.slice(1);
+      cmds.push({ section: 'Gradient', label: `Gradient: ${name}`, keywords: `gradient mesh ${g}`, run: safeCall('setGradientPreset', g) });
+    });
+    cmds.push({ section: 'Gradient', label: 'Toggle animated drift', keywords: 'gradient animation drift', run: safeCall('toggleGradientAnimate') });
+
+    // TYPOGRAPHY
+    cmds.push({ section: 'Typography', label: 'Increase font size', keywords: 'typography size bigger larger',  run: () => setFontScale(Math.min(120, (+SETTINGS.fontScale || 100) + 5)) });
+    cmds.push({ section: 'Typography', label: 'Decrease font size', keywords: 'typography size smaller',        run: () => setFontScale(Math.max(85, (+SETTINGS.fontScale || 100) - 5)) });
+    cmds.push({ section: 'Typography', label: 'Increase line height', keywords: 'typography line spacing',       run: () => setLineHeight(Math.min(170, (+SETTINGS.lineHeight || 150) + 5)) });
+    cmds.push({ section: 'Typography', label: 'Decrease line height', keywords: 'typography line spacing',       run: () => setLineHeight(Math.max(130, (+SETTINGS.lineHeight || 150) - 5)) });
+    cmds.push({ section: 'Typography', label: 'Font weight: Light',   keywords: 'weight light thin 300',         run: safeCall('setFontWeight', '300') });
+    cmds.push({ section: 'Typography', label: 'Font weight: Regular', keywords: 'weight regular normal 400',     run: safeCall('setFontWeight', '400') });
+    cmds.push({ section: 'Typography', label: 'Font weight: Medium',  keywords: 'weight medium bold 500',        run: safeCall('setFontWeight', '500') });
+    cmds.push({ section: 'Typography', label: 'Toggle dyslexia-friendly font', keywords: 'dyslexia font verdana accessibility', run: safeCall('toggleDyslexia') });
+
+    // GLASS
+    ['off','subtle','medium','heavy'].forEach(m => {
+      cmds.push({ section: 'Glass', label: `Glass: ${m.charAt(0).toUpperCase() + m.slice(1)}`, keywords: `glass blur frost ${m}`, run: safeCall('setGlassMode', m) });
+    });
+
+    // ACCESSIBILITY
+    cmds.push({ section: 'Accessibility', label: 'Toggle high contrast', keywords: 'a11y accessibility contrast wcag', run: safeCall('toggleHighContrast') });
+
+    // VIEWS
+    _allViews().forEach(v => {
+      cmds.push({ section: 'Views', label: `Apply view: ${v.name}`, keywords: `view preset ${v.name} ${v.sub || ''}`, run: () => applyViewPreset(v.id) });
+    });
+    cmds.push({ section: 'Views', label: 'Save current view…', keywords: 'save view snapshot preset', run: safeCall('saveCurrentView') });
+
+    // ACTIONS
+    cmds.push({ section: 'Actions', label: 'Paste URL from clipboard',  keywords: 'paste clipboard url',                 run: safeCall('pasteFromClipboard') });
+    cmds.push({ section: 'Actions', label: 'Load video info',           keywords: 'load info fetch',                     run: safeCall('loadInfo') });
+    cmds.push({ section: 'Actions', label: 'Open downloads folder',     keywords: 'open folder explorer downloads',      run: safeCall('openDownloadsFolder') });
+    cmds.push({ section: 'Actions', label: 'Clear history',             keywords: 'clear history wipe',                  run: safeCall('clearHistory') });
+    cmds.push({ section: 'Actions', label: 'Undo last delete',          keywords: 'undo restore recycle',                run: safeCall('undoLastDelete') });
+
+    // NAVIGATE
+    cmds.push({ section: 'Navigate', label: 'Focus URL input',          keywords: 'focus url input address',             run: () => { const el = document.getElementById('url-input'); if (el) { el.focus(); el.select(); } } });
+    cmds.push({ section: 'Navigate', label: 'Open Themes panel',        keywords: 'themes sidebar panel settings',       run: safeCall('openSettings') });
+    cmds.push({ section: 'Navigate', label: 'Close Themes panel',       keywords: 'themes sidebar close',                run: safeCall('closeSettings') });
+    cmds.push({ section: 'Navigate', label: 'Show keyboard shortcuts',  keywords: 'shortcuts help keyboard kbd',          run: safeCall('openShortcuts') });
+
+    return cmds;
+  }
+
+  function _cmdkScore(item, q) {
+    if (!q) return 1;
+    const hay = (item.label + ' ' + (item.keywords || '')).toLowerCase();
+    const needle = q.toLowerCase().trim();
+    if (!needle) return 1;
+    // Exact substring = highest.
+    if (hay.includes(needle)) return 10 + (item.label.toLowerCase().startsWith(needle) ? 5 : 0);
+    // Every whitespace-separated word must appear somewhere.
+    const parts = needle.split(/\s+/);
+    if (parts.every(p => hay.includes(p))) return 5;
+    return 0;
+  }
+
+  function _cmdkFilter(q) {
+    const all = _cmdkBuildRegistry();
+    const scored = all
+      .map(it => ({ it, s: _cmdkScore(it, q) }))
+      .filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s);
+    CMDK.items = scored.map(x => x.it);
+    // Group by section while preserving sort order.
+    const groups = [];
+    const seen = new Map();
+    CMDK.items.forEach(it => {
+      if (!seen.has(it.section)) {
+        seen.set(it.section, { section: it.section, items: [] });
+        groups.push(seen.get(it.section));
+      }
+      seen.get(it.section).items.push(it);
+    });
+    CMDK.groups = groups;
+    CMDK.selected = 0;
+    _cmdkRender();
+  }
+
+  function _cmdkRender() {
+    const host = document.getElementById('cmdk-results');
+    if (!host) return;
+    host.innerHTML = '';
+    if (CMDK.items.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'cmdk-empty';
+      empty.textContent = 'No matches';
+      host.appendChild(empty);
+      return;
+    }
+    let idx = 0;
+    CMDK.groups.forEach(group => {
+      const h = document.createElement('div');
+      h.className = 'cmdk-section';
+      h.textContent = group.section;
+      host.appendChild(h);
+      group.items.forEach(it => {
+        const row = document.createElement('div');
+        row.className = 'cmdk-item' + (idx === CMDK.selected ? ' selected' : '');
+        row.dataset.idx = String(idx);
+        const label = document.createElement('span');
+        label.className = 'cmdk-label';
+        label.textContent = it.label;
+        row.appendChild(label);
+        const meta = document.createElement('span');
+        meta.className = 'cmdk-meta';
+        meta.textContent = it.section;
+        row.appendChild(meta);
+        const myIdx = idx;
+        row.onmouseenter = () => { CMDK.selected = myIdx; _cmdkRepaintSelection(); };
+        row.onclick      = () => _cmdkExecute(myIdx);
+        host.appendChild(row);
+        idx++;
+      });
+    });
+    _cmdkScrollSelectedIntoView();
+  }
+
+  function _cmdkRepaintSelection() {
+    const host = document.getElementById('cmdk-results');
+    if (!host) return;
+    host.querySelectorAll('.cmdk-item').forEach(el => {
+      el.classList.toggle('selected', +el.dataset.idx === CMDK.selected);
+    });
+    _cmdkScrollSelectedIntoView();
+  }
+
+  function _cmdkScrollSelectedIntoView() {
+    const host = document.getElementById('cmdk-results');
+    if (!host) return;
+    const sel = host.querySelector('.cmdk-item.selected');
+    if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest' });
+  }
+
+  function _cmdkExecute(idx) {
+    const it = CMDK.items[idx];
+    if (!it) return;
+    closeCmdk();
+    // Defer so closeCmdk's UI work finishes before the command runs.
+    setTimeout(() => { try { it.run(); } catch (e) { console.error(e); } }, 20);
+  }
+
+  function openCmdk() {
+    const back = document.getElementById('cmdk-backdrop');
+    const input = document.getElementById('cmdk-input');
+    if (!back || !input) return;
+    CMDK.open = true;
+    back.classList.add('open');
+    input.value = '';
+    _cmdkFilter('');
+    // Focus after the open transition starts.
+    setTimeout(() => input.focus(), 30);
+  }
+
+  function closeCmdk() {
+    const back = document.getElementById('cmdk-backdrop');
+    if (!back) return;
+    CMDK.open = false;
+    back.classList.remove('open');
+  }
+
+  function toggleCmdk() { CMDK.open ? closeCmdk() : openCmdk(); }
+
+  function _cmdkBindKeys() {
+    const input = document.getElementById('cmdk-input');
+    if (input) {
+      input.addEventListener('input', () => _cmdkFilter(input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          CMDK.selected = Math.min(CMDK.items.length - 1, CMDK.selected + 1);
+          _cmdkRepaintSelection();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          CMDK.selected = Math.max(0, CMDK.selected - 1);
+          _cmdkRepaintSelection();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          _cmdkExecute(CMDK.selected);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeCmdk();
+        }
+      });
+    }
+    // Global Ctrl+K / Cmd+K to toggle.
+    window.addEventListener('keydown', (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        toggleCmdk();
+      }
+    });
+  }
+
   // One-shot: apply everything + paint every control. Called on boot
   // and whenever the themebar opens so stored values always match
   // what the user sees.
@@ -2925,10 +3677,13 @@
     applyGradient();
     applyTypography();
     applyGlass();
+    applyHighContrast();
     _syncBackgroundUI();
     _syncGradientUI();
     _syncTypographyUI();
     _syncGlassUI();
+    _syncHighContrastUI();
+    renderViews();
   }
 
   // Alias for backwards-compatibility with existing call sites that
@@ -3990,7 +4745,8 @@
 
   // Init
   wireSettingsControls();   // binds panel -> SETTINGS -> applyUISettings
-  applyThemebar();          // paint background/gradient control states
+  applyThemebar();          // paint background/gradient control states + v1.4 high-contrast + views
+  _cmdkBindKeys();          // v1.4: wire Ctrl+K command palette
   onFormatChange();         // shows/hides bitrate based on current format
   loadHistory();
   loadActivity();
