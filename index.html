@@ -45,10 +45,19 @@
      (the rail is position:fixed, so content would otherwise slide
      under it). 20px on the right for visual balance. */
   html { height: 100%; }
+  /* Hard-locked viewport: body fills the window exactly once and never
+     scrolls. Every tall piece of content (history lists, active queue,
+     previous downloads) scrolls INSIDE its card via .scroll-list. This
+     is what keeps the three-column layout feeling like a dashboard
+     instead of a web page.
+
+     padding-left: 72px accounts for the fixed left rail; padding-right
+     has slack for the column gutter; top/bottom kept tight. */
   body {
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
     display: flex; flex-direction: column; align-items: center;
-    padding: 32px 20px 32px 72px;
+    padding: 26px 20px 24px 72px;
   }
 
   /* =================================================================
@@ -66,8 +75,26 @@
     display: flex; flex-direction: column;
     align-items: center;
     padding: 18px 0 14px;
-    gap: 10px;
+    gap: 8px;
   }
+  /* Visual grouping: primary nav buttons up top, gear always at bottom */
+  .rail-spacer { flex: 1; min-height: 4px; }
+  .rail-sep {
+    width: 28px; height: 1px; background: var(--border);
+    margin: 4px 0;
+  }
+  /* Pulse the target card's border briefly when the rail's jump
+     button is clicked. Draws the eye to the column that just got
+     scrolled/filtered. */
+  @keyframes card-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.5);
+           border-color: var(--accent); }
+    60%  { box-shadow: 0 0 0 8px rgba(var(--accent-rgb), 0);
+           border-color: var(--accent); }
+    100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+           border-color: var(--border); }
+  }
+  .card.pulse { animation: card-pulse 1.1s ease-out; }
   .rail-logo {
     width: 28px; height: 28px; margin-bottom: 4px;
     display: flex; align-items: center; justify-content: center;
@@ -447,13 +474,40 @@
 
   /* History */
   #history { display: flex; flex-direction: column; gap: 8px; }
-  #history:empty::before {
-    content: 'Nothing yet. Download something.'; color: var(--text-4); font-size: 12px; font-style: italic;
-  }
-  #activity:empty::before {
-    content: 'Nothing here yet. Deleted downloads show up in this log.'; color: var(--text-4); font-size: 12px; font-style: italic;
-  }
   .hist-empty { color: var(--text-4); font-size: 12px; font-style: italic; padding: 4px 2px; }
+
+  /* Richer empty state: icon + headline + subtitle. Shown when the
+     history/activity lists have no items at all (first boot, after
+     Clear all). Swaps out for a filter-specific message when the
+     user has items but none match the current filter. */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 10px;
+    padding: 36px 18px; margin: auto 0;
+    color: var(--text-4); text-align: center;
+  }
+  .empty-state .es-icon {
+    width: 40px; height: 40px;
+    color: var(--text-4); opacity: 0.6;
+  }
+  .empty-state .es-head {
+    color: var(--text-3); font-size: 13px; font-weight: 500;
+    margin: 0;
+  }
+  .empty-state .es-sub {
+    color: var(--text-4); font-size: 11px;
+    max-width: 240px; line-height: 1.5; margin: 0;
+  }
+  /* Subtle breathing pulse on the icon so the empty state feels alive
+     and invites interaction rather than looking dead. */
+  @keyframes es-pulse {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50%      { opacity: 0.7; transform: scale(1.06); }
+  }
+  .empty-state .es-icon.pulse { animation: es-pulse 2.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .empty-state .es-icon.pulse { animation: none; }
+  }
   .hist-item {
     display: flex; align-items: center; gap: 12px;
     padding: var(--item-pad-y) var(--item-pad-x);
@@ -647,6 +701,117 @@
   }
   .modal textarea::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
   .modal textarea::-webkit-scrollbar-thumb:active { background: var(--accent); }
+  /* =================================================================
+     Playlist picker modal -- shown when the URL is a playlist.
+     Scrollable list of videos with thumbnails and checkboxes, header
+     with "Select all / Select none", footer with Download selected
+     button that respects the main form's format/quality.
+     ================================================================= */
+  .pl-modal { width: min(90vw, 680px); height: min(82vh, 760px); display: flex; flex-direction: column; }
+  .pl-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin: 4px 0 12px;
+    padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  }
+  .pl-title { font-size: 13px; color: var(--text-2); flex: 1; min-width: 0;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pl-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .pl-actions button {
+    padding: 4px 9px; background: transparent; border: 1px solid var(--border-2);
+    color: var(--text-3); border-radius: 5px; font-family: var(--font); font-size: 10px;
+    cursor: pointer;
+  }
+  .pl-actions button:hover { background: var(--bg-3); color: var(--text); border-color: var(--accent); }
+
+  .pl-list {
+    flex: 1; min-height: 0; overflow-y: auto;
+    padding-right: 4px;
+    display: flex; flex-direction: column; gap: 6px;
+    scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+  }
+  .pl-list::-webkit-scrollbar { width: 8px; }
+  .pl-list::-webkit-scrollbar-track { background: transparent; }
+  .pl-list::-webkit-scrollbar-thumb {
+    background: var(--bg-3); border-radius: 4px; border: 2px solid var(--bg-1);
+  }
+  .pl-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 8px; background: var(--bg-2);
+    border: 1px solid var(--border); border-radius: 6px;
+    cursor: pointer; transition: border-color 0.1s, background 0.1s;
+  }
+  .pl-row:hover { background: var(--bg-3); border-color: var(--border-2); }
+  .pl-row input[type="checkbox"] { margin: 0; cursor: pointer; flex-shrink: 0; }
+  .pl-thumb {
+    width: 64px; height: 36px; flex-shrink: 0;
+    background: var(--bg-3); border-radius: 4px; overflow: hidden;
+  }
+  .pl-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .pl-row-meta { flex: 1; min-width: 0; font-size: 12px; }
+  .pl-row-title {
+    color: var(--text); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pl-row-dur {
+    font-family: var(--mono); font-size: 10px; color: var(--text-4);
+  }
+  .pl-footer {
+    margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+  }
+  .pl-footer-info { font-size: 11px; color: var(--text-3); }
+  .pl-footer button {
+    padding: 8px 16px; background: var(--accent); border: none;
+    color: white; border-radius: 6px; font-family: var(--font);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .pl-footer button:hover { background: var(--accent-hover); }
+  .pl-footer button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .pl-footer button.secondary {
+    background: transparent; color: var(--text-3);
+    border: 1px solid var(--border-2);
+  }
+  .pl-footer button.secondary:hover { background: var(--bg-3); color: var(--text); }
+
+  /* =================================================================
+     Right-click context menu on history rows.
+     Floats at the cursor position; dismisses on outside click or Esc.
+     Shows: Copy URL, Open on YouTube, Reveal in folder, Rename,
+     Redownload, Delete.
+     ================================================================= */
+  .ctx-menu {
+    position: fixed; z-index: 220;
+    min-width: 200px;
+    background: var(--bg-1);
+    border: 1px solid var(--border-2);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    padding: 4px;
+    font-size: 12px;
+    animation: ctx-fade 0.12s ease-out;
+  }
+  @keyframes ctx-fade {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .ctx-item {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 7px 10px;
+    background: transparent; border: none; color: var(--text-2);
+    font-family: var(--font); font-size: 12px; text-align: left;
+    border-radius: 5px; cursor: pointer;
+    transition: background 0.08s, color 0.08s;
+  }
+  .ctx-item:hover { background: var(--bg-3); color: var(--text); }
+  .ctx-item.danger { color: var(--text-3); }
+  .ctx-item.danger:hover { color: var(--danger); background: rgba(239, 68, 68, 0.1); }
+  .ctx-item svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.8; }
+  .ctx-sep {
+    height: 1px; background: var(--border);
+    margin: 4px 2px;
+  }
+
   /* Keyboard-shortcut cheatsheet modal. Narrower and shorter than the
      transcript modal since the content is a tight key/value grid. */
   .sc-modal { width: min(90vw, 480px); height: auto; }
@@ -703,12 +868,64 @@
 </head>
 <body>
 
-  <!-- Permanent left edge rail. Always visible, hosts the gear button
-       and the brand dot. The full settings panel slides out OVER the
-       rail when opened, so the gear feels like part of the sidebar
-       rather than a floating orphan. -->
+  <!-- Permanent left edge rail. Always visible, hosts the utility
+       buttons. The full settings panel slides out OVER the rail when
+       opened, so the controls feel built-in rather than floating. -->
   <aside class="side-rail" aria-label="Utility rail">
     <div class="rail-logo" title="YT Grab"><span class="dot"></span></div>
+    <div class="rail-sep"></div>
+
+    <!-- Quick open: the downloads folder on disk (Explorer). Huge
+         daily-use shortcut; no need to hunt through the file manager. -->
+    <button class="rail-btn" onclick="openDownloadsFolder()"
+            title="Open downloads folder" aria-label="Open downloads folder">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
+    </button>
+
+    <!-- Jump-to-section buttons. Click scrolls that card's list to top,
+         focuses its filter, and briefly pulses its border so the user's
+         eye catches the highlighted column. -->
+    <button class="rail-btn" onclick="jumpTo('history')"
+            title="Jump to History" aria-label="Jump to History">
+      <!-- Clock icon (history = files on disk over time) -->
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+    </button>
+    <button class="rail-btn" onclick="jumpTo('activity')"
+            title="Jump to Previous Downloads" aria-label="Jump to Previous Downloads">
+      <!-- Archive/box icon (previous = archived log) -->
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round">
+        <polyline points="21 8 21 21 3 21 3 8"/>
+        <rect x="1" y="3" width="22" height="5"/>
+        <line x1="10" y1="12" x2="14" y2="12"/>
+      </svg>
+    </button>
+
+    <!-- Keyboard shortcut cheatsheet toggle (same as pressing ?) -->
+    <button class="rail-btn" onclick="openShortcuts()"
+            title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+    </button>
+
+    <!-- Spacer pushes gear to the bottom of the rail. -->
+    <div class="rail-spacer"></div>
+
     <button class="rail-btn" id="settings-btn" onclick="openSettings()"
             title="Settings" aria-label="Settings">⚙</button>
   </aside>
@@ -865,6 +1082,10 @@
               <span>Save transcript (.txt)</span>
             </label>
             <label class="checkbox">
+              <input type="checkbox" id="opt-subtitles">
+              <span>Save subtitles (.srt)</span>
+            </label>
+            <label class="checkbox">
               <input type="checkbox" id="opt-thumbnail">
               <span>Save thumbnail (.jpg)</span>
             </label>
@@ -914,6 +1135,30 @@
         <button onclick="copyTranscript()">Copy</button>
         <button onclick="downloadTranscript()">Save .txt</button>
         <button class="primary" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Playlist picker. Opened when Load info detects a playlist URL.
+       Lets the user select which videos to download instead of the
+       whole playlist. Dismissed with Esc or Cancel. -->
+  <div class="modal-back" id="pl-back" onclick="if (event.target === this) closePlaylist()">
+    <div class="modal pl-modal">
+      <h3 id="pl-modal-title">Playlist</h3>
+      <div class="pl-head">
+        <div class="pl-title" id="pl-title">—</div>
+        <div class="pl-actions">
+          <button onclick="playlistSelectAll(true)">Select all</button>
+          <button onclick="playlistSelectAll(false)">None</button>
+        </div>
+      </div>
+      <div class="pl-list" id="pl-list"></div>
+      <div class="pl-footer">
+        <div class="pl-footer-info" id="pl-info">0 selected</div>
+        <div style="display:flex; gap:8px;">
+          <button class="secondary" onclick="closePlaylist()">Cancel</button>
+          <button id="pl-go" onclick="playlistDownloadSelected()">Download selected</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1196,6 +1441,7 @@
     const audio_bitrate = (document.getElementById('opt-bitrate') || {}).value || '192';
     const want_transcript = !!(document.getElementById('opt-transcript') || {}).checked;
     const want_thumbnail = !!(document.getElementById('opt-thumbnail') || {}).checked;
+    const want_subtitles = !!(document.getElementById('opt-subtitles') || {}).checked;
 
     toast(`Queueing ${urls.length} downloads...`, 'ok');
     let queued = 0;
@@ -1208,6 +1454,7 @@
           audio_bitrate: isVideo ? null : audio_bitrate,
           want_transcript,
           want_thumbnail,
+          want_subtitles,
           // No title -- server fetches the real one during yt-dlp probe.
         });
         if (resp.ok) {
@@ -1248,11 +1495,137 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Playlist detection: YouTube playlist URLs have a `list=` query param.
+  // Important: videos WITHIN a playlist also have list= -- we only want
+  // to open the picker if the URL is a pure playlist (no watch ID), OR
+  // the user pasted specifically a playlist URL (list= but no v=).
+  // For safety we also accept /playlist?list= paths.
+  // ---------------------------------------------------------------------------
+  function isPlaylistUrl(url) {
+    if (!url) return false;
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^www\./, '');
+      if (!/youtube\.com|youtu\.be/.test(host)) return false;
+      if (u.pathname.startsWith('/playlist')) return true;
+      // If list= is present but v= is NOT, treat as playlist link.
+      if (u.searchParams.has('list') && !u.searchParams.has('v')) return true;
+      return false;
+    } catch { return false; }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Playlist picker: fetch flat listing, render checkbox list, let user
+  // choose which videos to download. Queues the selected entries as
+  // separate downloads using queueBatchDownload.
+  // ---------------------------------------------------------------------------
+  let _playlistEntries = [];  // mirrored state so checkbox UI can be rebuilt
+
+  async function openPlaylistPicker(url) {
+    const back = document.getElementById('pl-back');
+    const list = document.getElementById('pl-list');
+    const title = document.getElementById('pl-title');
+    const info = document.getElementById('pl-info');
+    const go = document.getElementById('pl-go');
+
+    // Loading state
+    title.textContent = 'Loading playlist...';
+    list.innerHTML = `
+      <div class="empty-state" style="padding: 40px 18px">
+        <svg class="es-icon pulse" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"/>
+          <line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/>
+          <line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        <p class="es-sub">Fetching playlist contents...</p>
+      </div>`;
+    info.textContent = '';
+    go.disabled = true;
+    back.classList.add('active');
+
+    const r = await api('POST', '/api/playlist_info', { url });
+    if (!r.ok) {
+      list.innerHTML = `<div class="hist-empty">Could not load: ${escapeHtml(r.error || 'unknown error')}</div>`;
+      return;
+    }
+
+    _playlistEntries = (r.entries || []).map(e => ({ ...e, selected: true }));
+    title.textContent = `${r.playlist_title} · ${_playlistEntries.length} videos`;
+    title.title = r.playlist_uploader || '';
+    _renderPlaylistList();
+    go.disabled = false;
+  }
+
+  function _renderPlaylistList() {
+    const list = document.getElementById('pl-list');
+    list.innerHTML = '';
+    _playlistEntries.forEach((e, idx) => {
+      const row = document.createElement('label');
+      row.className = 'pl-row';
+      const dur = e.duration ? fmtDuration(e.duration) : '';
+      row.innerHTML = `
+        <input type="checkbox" ${e.selected ? 'checked' : ''}>
+        <div class="pl-thumb">${e.thumbnail
+           ? `<img src="${escapeHtml(e.thumbnail)}" loading="lazy" alt="">`
+           : ''}</div>
+        <div class="pl-row-meta">
+          <div class="pl-row-title">${escapeHtml(e.title)}</div>
+          <div class="pl-row-dur">${escapeHtml(dur)}</div>
+        </div>`;
+      const cb = row.querySelector('input');
+      cb.onchange = () => {
+        _playlistEntries[idx].selected = cb.checked;
+        _updatePlaylistInfo();
+      };
+      list.appendChild(row);
+    });
+    _updatePlaylistInfo();
+  }
+
+  function _updatePlaylistInfo() {
+    const n = _playlistEntries.filter(e => e.selected).length;
+    const total = _playlistEntries.length;
+    document.getElementById('pl-info').textContent = `${n} of ${total} selected`;
+    document.getElementById('pl-go').disabled = (n === 0);
+  }
+
+  function playlistSelectAll(on) {
+    _playlistEntries.forEach(e => e.selected = on);
+    _renderPlaylistList();
+  }
+
+  function closePlaylist() {
+    document.getElementById('pl-back').classList.remove('active');
+    _playlistEntries = [];
+  }
+
+  function playlistDownloadSelected() {
+    const urls = _playlistEntries.filter(e => e.selected).map(e => e.url);
+    if (!urls.length) return;
+    closePlaylist();
+    // Clear the URL input so the user knows the batch is kicked off.
+    const inp = document.getElementById('url-input');
+    if (inp) inp.value = '';
+    queueBatchDownload(urls);
+  }
+
+  // ---------------------------------------------------------------------------
   // Load info
   // ---------------------------------------------------------------------------
   async function loadInfo() {
     const url = document.getElementById('url-input').value.trim();
     if (!url) { toast('Paste a URL first', 'err'); return; }
+
+    // Playlist fast path: open the picker modal instead of single-video preview.
+    if (isPlaylistUrl(url)) {
+      openPlaylistPicker(url);
+      return;
+    }
+
     const btn = document.getElementById('load-btn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Loading';
@@ -1313,22 +1686,36 @@
     const audio_bitrate = document.getElementById('opt-bitrate').value;
     const want_transcript = document.getElementById('opt-transcript').checked;
     const want_thumbnail = document.getElementById('opt-thumbnail').checked;
+    const want_subtitles = document.getElementById('opt-subtitles').checked;
     const btn = document.getElementById('dl-btn');
     btn.disabled = true;
-    const original = btn.textContent;
     btn.innerHTML = '<span class="spinner"></span> Starting';
-    const resp = await api('POST', '/api/download', {
-      url,
-      format_ext,
-      resolution: isVideo ? resolution : null,
-      audio_bitrate: isVideo ? null : audio_bitrate,
-      want_transcript,
-      want_thumbnail,
-      title: currentInfo.title,
-    });
-    btn.disabled = false;
-    btn.textContent = original;
-    if (!resp.ok) { toast(resp.error || 'Could not start download', 'err'); return; }
+    // try/finally so the button always re-enables -- even if the POST
+    // throws (network blip, addJob error, etc.). Without this, one
+    // failed call could leave the button permanently greyed out.
+    let resp = null;
+    try {
+      resp = await api('POST', '/api/download', {
+        url,
+        format_ext,
+        resolution: isVideo ? resolution : null,
+        audio_bitrate: isVideo ? null : audio_bitrate,
+        want_transcript,
+        want_thumbnail,
+        want_subtitles,
+        title: currentInfo.title,
+      });
+    } finally {
+      // Reset label to a known value -- never depend on whatever was
+      // there before this invocation, otherwise repeated fast clicks
+      // can leave it stuck showing "Starting".
+      btn.disabled = false;
+      btn.textContent = 'Download';
+    }
+    if (!resp || !resp.ok) {
+      toast((resp && resp.error) || 'Could not start download', 'err');
+      return;
+    }
     toast('Download started', 'ok');
     addJob(resp.job_id, currentInfo.title);
   }
@@ -1353,14 +1740,46 @@
         <button class="view-transcript" style="display:none;">View transcript</button>
       </div>`;
     jobs.insertBefore(div, jobs.firstChild);
-    const pollTimer = setInterval(() => pollJob(job_id), 600);
-    activeJobs.set(job_id, { pollTimer, element: div });
+    activeJobs.set(job_id, { element: div });
+    _ensureMasterPoller();  // starts/keeps the single batched poller alive
   }
 
-  async function pollJob(job_id) {
-    const resp = await api('GET', '/api/progress/' + job_id);
+  // -------------------------------------------------------------------
+  // Single-poller architecture. We used to fire one setInterval per
+  // active job hitting /api/progress/<id> -- with 15+ downloads that
+  // saturated Flask and made starting a NEW download hang. Now one
+  // interval polls /api/progress_all once per second, passing every
+  // active job ID in a single batched request. Request rate is
+  // constant regardless of job count.
+  // -------------------------------------------------------------------
+  let _masterPollTimer = null;
+
+  function _ensureMasterPoller() {
+    if (_masterPollTimer != null) return;
+    if (activeJobs.size === 0) return;
+    _masterPollTimer = setInterval(_pollAllJobs, 900);
+  }
+  function _stopMasterPoller() {
+    if (_masterPollTimer != null) {
+      clearInterval(_masterPollTimer);
+      _masterPollTimer = null;
+    }
+  }
+
+  async function _pollAllJobs() {
+    if (activeJobs.size === 0) { _stopMasterPoller(); return; }
+    const ids = Array.from(activeJobs.keys());
+    const resp = await api('POST', '/api/progress_all', { ids });
     if (!resp.ok) return;
-    const job = resp.job;
+    const map = resp.jobs || {};
+    for (const id of ids) {
+      const job = map[id];
+      if (!job) continue;
+      _applyJobUpdate(id, job);
+    }
+  }
+
+  function _applyJobUpdate(job_id, job) {
     const el = document.getElementById('job-' + job_id);
     if (!el) return;
     const bar = el.querySelector('.job-progress-inner');
@@ -1380,9 +1799,7 @@
       toast('Done: ' + (job.title || 'download'), 'ok');
       loadHistory();
       loadActivity();
-      // Auto-clear from Active after a short victory display -- the
-      // download is already in History with Open + Text buttons, no
-      // reason to leave it cluttering Active forever.
+      // Auto-clear from Active after a short victory display.
       setTimeout(() => {
         if (!el.parentNode) return;
         el.classList.add('fading');
@@ -1397,8 +1814,8 @@
   }
 
   function stopPolling(job_id) {
-    const rec = activeJobs.get(job_id);
-    if (rec) { clearInterval(rec.pollTimer); activeJobs.delete(job_id); }
+    activeJobs.delete(job_id);
+    if (activeJobs.size === 0) _stopMasterPoller();
   }
 
   async function openPath(path) {
@@ -1455,6 +1872,27 @@
         : (_historyCache.length > 0 ? String(_historyCache.length) : '');
     }
     box.innerHTML = '';
+    // Empty states. Three cases: no items + no filter (first boot),
+    // no items + filter (user's search came up empty), has items (render
+    // normally below).
+    if (items.length === 0) {
+      if (filter) {
+        box.innerHTML = '<div class="hist-empty">No matches for that filter.</div>';
+      } else {
+        box.innerHTML = `
+          <div class="empty-state">
+            <svg class="es-icon pulse" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="1.5"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2"/>
+              <path d="M10 9l5 3-5 3V9z" fill="currentColor" stroke="none"/>
+            </svg>
+            <p class="es-head">Nothing here yet</p>
+            <p class="es-sub">Paste a YouTube URL above to grab your first video. Completed downloads land here for easy access.</p>
+          </div>`;
+      }
+      return;
+    }
     items.forEach(item => {
       const div = document.createElement('div');
       div.className = 'hist-item';
@@ -1487,6 +1925,11 @@
               <button class="t-btn" title="View transcript">Text</button>
               <button class="t-del danger" title="Delete transcript only">×</button>
             </span>` : ''}
+          ${item.subtitle_path ? `
+            <span class="combo-btn">
+              <button class="sub-btn" title="Open .srt subtitle file">Subs</button>
+              <button class="sub-del danger" title="Delete subtitle only">×</button>
+            </span>` : ''}
           ${item.thumbnail_path ? `
             <span class="combo-btn">
               <button class="thumb-btn" title="Open thumbnail image">Thumb</button>
@@ -1505,12 +1948,18 @@
       if (thumbBtn) thumbBtn.onclick = () => openPath(item.thumbnail_path);
       const thumbDel = div.querySelector('.thumb-del');
       if (thumbDel) thumbDel.onclick = () => deleteSidecar(item.id, 'thumbnail');
+      const subBtn = div.querySelector('.sub-btn');
+      if (subBtn) subBtn.onclick = () => openPath(item.subtitle_path);
+      const subDel = div.querySelector('.sub-del');
+      if (subDel) subDel.onclick = () => deleteSidecar(item.id, 'subtitle');
       div.querySelector('.redl-btn').onclick = () => redownload(item);
       div.querySelector('.del-btn').onclick = () => deleteHistoryItem(item.id);
       // Double-click the title itself to rename -- convention from
       // Windows Explorer. Covers people who don't notice the pencil.
       const titleEl = div.querySelector('.hist-title');
       if (titleEl) titleEl.ondblclick = () => startRename(div, item);
+      // Right-click anywhere on the row opens the context menu.
+      div.addEventListener('contextmenu', (e) => openHistoryContextMenu(e, div, item));
       box.appendChild(div);
     });
   }
@@ -1656,7 +2105,18 @@
       if (filter) {
         box.innerHTML = '<div class="hist-empty">No matches for that filter.</div>';
       } else {
-        box.innerHTML = '<div class="hist-empty">Nothing here yet. Deleted downloads show up in this log.</div>';
+        box.innerHTML = `
+          <div class="empty-state">
+            <svg class="es-icon" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="1.5"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            <p class="es-head">Deleted downloads go here</p>
+            <p class="es-sub">Anything you remove from History lands in this log so you can bring it back with one click.</p>
+          </div>`;
       }
       return;
     }
@@ -1909,6 +2369,12 @@
   // Also check on raw window focus (covers cases where the window is
   // still "visible" per the API but the user just clicked back into it).
   window.addEventListener('focus', () => { autoDetectClipboard(); });
+  // WebView2's clipboard API often gates reads on a user gesture --
+  // window focus alone may not qualify. Firing on the first click
+  // inside the app guarantees permission is granted and the URL
+  // gets pulled in. Throttled via the _lastAutoDetected dedupe so
+  // clicking doesn't spam toasts.
+  document.addEventListener('click', () => { autoDetectClipboard(); });
 
   // Init
   wireSettingsControls();   // binds panel -> SETTINGS -> applyUISettings
@@ -1944,15 +2410,153 @@
     document.getElementById('sc-back').classList.remove('active');
   }
 
+  // Rail button: open the downloads folder in Explorer. Server defaults
+  // to DOWNLOADS_DIR when no path is given. Reuses an already-open
+  // Explorer window at that location if one exists.
+  async function openDownloadsFolder() {
+    const r = await api('POST', '/api/open_folder', {});
+    if (!r.ok) toast(r.error || 'Could not open folder', 'err');
+  }
+
+  // Rail button: jump to a card section. Scrolls that list to top,
+  // focuses its filter input, and pulses the card border so the user
+  // can see which column they just jumped to. section = 'history' or
+  // 'activity' (= Previous Downloads).
+  function jumpTo(section) {
+    const listId   = section === 'activity' ? 'activity'        : 'history';
+    const filterId = section === 'activity' ? 'activity-filter' : 'history-filter';
+    const list = document.getElementById(listId);
+    const filter = document.getElementById(filterId);
+    if (!list) return;
+
+    // Card = the parent .card of the list.
+    const card = list.closest('.card');
+
+    // Scroll the list itself to top (inner scroll, not page).
+    list.scrollTop = 0;
+
+    // Pulse the card border once.
+    if (card) {
+      card.classList.remove('pulse');
+      // Force reflow so re-adding the class restarts the animation.
+      void card.offsetWidth;
+      card.classList.add('pulse');
+      setTimeout(() => card.classList.remove('pulse'), 1200);
+    }
+
+    // Focus the filter input so typing starts filtering immediately.
+    if (filter) {
+      filter.focus();
+      filter.select();
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Right-click context menu for history rows. Built on-demand each
+  // click (no persistent menu DOM) so styling flows from current CSS
+  // vars (including the user's accent color choice).
+  // -------------------------------------------------------------------
+  let _openCtxMenu = null;
+
+  function closeContextMenu() {
+    if (_openCtxMenu && _openCtxMenu.parentNode) _openCtxMenu.remove();
+    _openCtxMenu = null;
+  }
+
+  function openHistoryContextMenu(evt, rowEl, item) {
+    evt.preventDefault();
+    closeContextMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'ctx-menu';
+
+    const mk = (label, icon, cb, danger = false) => {
+      const btn = document.createElement('button');
+      btn.className = 'ctx-item' + (danger ? ' danger' : '');
+      btn.innerHTML = icon + '<span>' + escapeHtml(label) + '</span>';
+      btn.onclick = () => { closeContextMenu(); cb(); };
+      menu.appendChild(btn);
+    };
+    const sep = () => {
+      const s = document.createElement('div');
+      s.className = 'ctx-sep';
+      menu.appendChild(s);
+    };
+
+    // ---- SVG icons (small, inherit currentColor) ----
+    const ICONS = {
+      copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+      yt:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+      fold: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+      ren:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
+      redl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+      del:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+    };
+
+    // Resolve the original URL from either the source_url field
+    // (newer entries) or reconstruct from video_id (older entries or
+    // any entry with a missing source_url).
+    const itemUrl = item.source_url
+      || (item.video_id ? `https://www.youtube.com/watch?v=${item.video_id}` : null);
+
+    // ---- Actions ----
+    mk('Copy URL', ICONS.copy, async () => {
+      if (!itemUrl) { toast('URL not recorded for this entry', 'err'); return; }
+      try {
+        await navigator.clipboard.writeText(itemUrl);
+        toast('URL copied', 'ok');
+      } catch {
+        toast('Clipboard blocked', 'err');
+      }
+    });
+    mk('Open on YouTube', ICONS.yt, () => {
+      if (!itemUrl) { toast('URL not recorded', 'err'); return; }
+      window.open(itemUrl, '_blank');
+    });
+    mk('Reveal in folder', ICONS.fold, () => {
+      if (!item.filename) { toast('No file to reveal', 'err'); return; }
+      openPath(item.filename);
+    });
+    sep();
+    mk('Rename', ICONS.ren, () => startRename(rowEl, item));
+    mk('Redownload', ICONS.redl, () => redownload(item));
+    sep();
+    mk('Delete', ICONS.del, () => deleteHistoryItem(item.id), /*danger*/ true);
+
+    // Position: clamp so menu doesn't overflow viewport.
+    document.body.appendChild(menu);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    let x = evt.clientX, y = evt.clientY;
+    if (x + mw + 8 > vw) x = vw - mw - 8;
+    if (y + mh + 8 > vh) y = vh - mh - 8;
+    menu.style.left = x + 'px';
+    menu.style.top  = y + 'px';
+
+    _openCtxMenu = menu;
+  }
+
+  // Global dismiss handlers. Click anywhere outside the menu closes it.
+  document.addEventListener('mousedown', (e) => {
+    if (_openCtxMenu && !_openCtxMenu.contains(e.target)) closeContextMenu();
+  });
+  window.addEventListener('blur',   () => closeContextMenu());
+  window.addEventListener('resize', () => closeContextMenu());
+  window.addEventListener('scroll', () => closeContextMenu(), true);
+
   // Global keydown: Esc closes things, "?" shows cheatsheet, Ctrl+,
   // opens settings (universal preferences shortcut).
   document.addEventListener('keydown', (e) => {
-    // Esc: close settings panel or shortcuts modal
+    // Esc: close panel / modals in priority order
     if (e.key === 'Escape') {
+      const pl = document.getElementById('pl-back');
+      if (pl && pl.classList.contains('active')) { closePlaylist(); return; }
       const sc = document.getElementById('sc-back');
       if (sc && sc.classList.contains('active')) { closeShortcuts(); return; }
       const panel = document.getElementById('settings-panel');
       if (panel && panel.classList.contains('active')) closeSettings();
+      // Also close any open context menu
+      closeContextMenu();
       return;
     }
     // Ctrl+, opens settings (Windows/macOS convention for preferences)

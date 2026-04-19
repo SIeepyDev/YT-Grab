@@ -108,7 +108,7 @@ def _trash_all_sidecars(entry):
             _trash_file(folder)
             return
     # Fallback for legacy flat-layout entries
-    for key in ("filename", "transcript_path", "thumbnail_path"):
+    for key in ("filename", "transcript_path", "thumbnail_path", "subtitle_path"):
         path = entry.get(key)
         if path:
             _trash_file(path)
@@ -556,6 +556,7 @@ def _do_download(job_id, url, params):
     audio_bitrate = str(params.get("audio_bitrate", "192"))
     want_transcript = bool(params.get("want_transcript", False))
     want_thumbnail = bool(params.get("want_thumbnail", False))
+    want_subtitles = bool(params.get("want_subtitles", False))
 
     def _hook(d):
         status = d.get("status")
@@ -582,6 +583,12 @@ def _do_download(job_id, url, params):
     # When neither applies, skipping writethumbnail is faster and avoids
     # leaving stray files behind.
     opts["writethumbnail"] = bool(want_thumbnail or HAS_FFPROBE)
+
+    # NOTE: subtitles intentionally NOT wired into the main opts here.
+    # yt-dlp treats subtitle fetch failures as fatal, so a bad subtitle
+    # track (e.g. HTTP error on the "en-orig" variant) kills the entire
+    # video download. Instead we do a separate, isolated subtitle pass
+    # AFTER the video lands -- see the post-download block below.
 
     if format_group == "audio":
         opts["format"] = "bestaudio/best"
@@ -660,6 +667,38 @@ def _do_download(job_id, url, params):
                 try: c.unlink()
                 except Exception: pass
 
+        # Subtitle sidecar (optional). Run in its OWN yt-dlp invocation
+        # with skip_download=True, and in a try/except so any failure
+        # (HTTP error, missing track, unsupported language code) is
+        # silent and does NOT corrupt the already-successful video
+        # download. yt-dlp's default behavior of treating subtitle
+        # errors as fatal is exactly what we're isolating against here.
+        subtitle_path = None
+        if want_subtitles:
+            try:
+                sub_opts = _yt_opts_base()
+                sub_opts["skip_download"] = True
+                sub_opts["writesubtitles"] = True
+                sub_opts["writeautomaticsub"] = True
+                # Narrow language list -- broad patterns like "en.*" pick
+                # up broken variants like "en-orig" that fail HTTP.
+                sub_opts["subtitleslangs"] = ["en", "en-US", "en-GB"]
+                sub_opts["subtitlesformat"] = "srt/best"
+                # Output to the same folder with matching stem so our
+                # glob below finds them.
+                sub_opts["outtmpl"] = str(video_folder / f"{unique_stem}.%(ext)s")
+                sub_opts["ignoreerrors"] = True   # belt-and-suspenders
+                with yt_dlp.YoutubeDL(sub_opts) as sub_ydl:
+                    sub_ydl.download([url])
+                srts = sorted(
+                    video_folder.glob(f"{unique_stem}*.srt"),
+                    key=lambda p: (len(p.name), p.name),
+                )
+                if srts:
+                    subtitle_path = str(srts[0].resolve())
+            except Exception as se:
+                print(f"[yt-grab] subtitle fetch skipped: {se}", file=sys.stderr)
+
         # Transcript (optional) -- save as .txt alongside the video.
         transcript_path = None
         video_id = info.get("id")
@@ -680,6 +719,7 @@ def _do_download(job_id, url, params):
             filename=filename,
             transcript_path=transcript_path,
             thumbnail_path=thumbnail_path,
+            subtitle_path=subtitle_path,
             speed="",
             eta="",
         )
@@ -700,6 +740,7 @@ def _do_download(job_id, url, params):
             "filename": filename,
             "transcript_path": transcript_path,
             "thumbnail_path": thumbnail_path,
+            "subtitle_path": subtitle_path,
             "format_group": format_group,
             "format_ext": format_ext,
             "resolution": "—" if format_group == "audio" else str(resolution),
@@ -707,6 +748,7 @@ def _do_download(job_id, url, params):
             "completed_at": completed_dt.isoformat(timespec="seconds"),
             "duration_seconds": duration_seconds,
             "source_url": url,
+            "video_id": video_id,
         })
     except Exception as e:
         _update_job(job_id, status="error", error=str(e))
@@ -825,6 +867,71 @@ def api_info():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/playlist_info", methods=["POST"])
+def api_playlist_info():
+    """Fetch a FLAT playlist listing: just titles + IDs + thumbnails for
+    each entry, no per-video format probe. Much faster than calling
+    /api/info on each individual URL -- a 50-video playlist comes back
+    in ~1 second instead of ~30.
+
+    Response shape:
+      {
+        ok: True,
+        playlist_title: "...",
+        playlist_uploader: "...",
+        entries: [
+          { id, title, url, duration, thumbnail },
+          ...
+        ]
+      }
+    """
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"ok": False, "error": "missing url"}), 400
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",  # title + id only, no format probe
+        "skip_download": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not info:
+            return jsonify({"ok": False, "error": "empty response"}), 500
+        entries_raw = info.get("entries") or []
+        if not entries_raw:
+            return jsonify({"ok": False, "error": "no entries in playlist"}), 400
+        entries = []
+        for e in entries_raw:
+            if not e:
+                continue
+            vid = e.get("id") or ""
+            # Build the canonical watch URL -- flat_playlist gives us
+            # id but not always a usable url field.
+            watch_url = e.get("url") or (
+                f"https://www.youtube.com/watch?v={vid}" if vid else ""
+            )
+            entries.append({
+                "id": vid,
+                "title": e.get("title") or "Untitled",
+                "url": watch_url,
+                "duration": e.get("duration"),
+                "thumbnail": e.get("thumbnail") or (
+                    f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg" if vid else None
+                ),
+            })
+        return jsonify({
+            "ok": True,
+            "playlist_title": info.get("title") or "Playlist",
+            "playlist_uploader": info.get("uploader") or info.get("channel") or "",
+            "entries": entries,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/download", methods=["POST"])
 def api_download():
     data = request.get_json(silent=True) or {}
@@ -849,6 +956,7 @@ def api_download():
         "audio_bitrate": str(data.get("audio_bitrate") or "192"),
         "want_transcript": bool(data.get("want_transcript")),
         "want_thumbnail": bool(data.get("want_thumbnail")),
+        "want_subtitles": bool(data.get("want_subtitles")),
     }
     title_hint = (data.get("title") or "Untitled").strip()
     job_id = _new_job(title_hint)
@@ -887,17 +995,22 @@ def api_history_delete(job_id):
 
 @app.route("/api/history/delete_sidecar/<job_id>/<kind>", methods=["POST"])
 def api_history_delete_sidecar(job_id, kind):
-    """Delete JUST ONE sidecar file (transcript or thumbnail) without
-    touching the main video. The history row stays; only the relevant
-    path field is cleared so the UI hides the button. File goes to the
-    Recycle Bin like the main delete does.
+    """Delete JUST ONE sidecar file without touching the main video.
+    The history row stays; only the relevant path field is cleared so
+    the UI hides the button. File goes to the Recycle Bin like the
+    main delete does.
 
     kind: "transcript" -> .txt sidecar
           "thumbnail"  -> .jpg sidecar
+          "subtitle"   -> .srt sidecar
     """
-    if kind not in ("transcript", "thumbnail"):
+    if kind not in ("transcript", "thumbnail", "subtitle"):
         return jsonify({"ok": False, "error": "invalid kind"}), 400
-    key = "transcript_path" if kind == "transcript" else "thumbnail_path"
+    key = {
+        "transcript": "transcript_path",
+        "thumbnail":  "thumbnail_path",
+        "subtitle":   "subtitle_path",
+    }[kind]
 
     hist = _load_history()
     target_entry = None
@@ -1042,6 +1155,7 @@ def api_history_rename(job_id):
     target["filename"] = _remap(target.get("filename"))
     target["transcript_path"] = _remap(target.get("transcript_path"))
     target["thumbnail_path"] = _remap(target.get("thumbnail_path"))
+    target["subtitle_path"] = _remap(target.get("subtitle_path"))
     _save_history(hist)
 
     return jsonify({"ok": True, "entry": target, "files_renamed": True})
@@ -1212,6 +1326,25 @@ def api_progress(job_id):
         return jsonify({"ok": True, "job": dict(job)})
 
 
+@app.route("/api/progress_all", methods=["POST"])
+def api_progress_all():
+    """Batch progress endpoint -- frontend sends a list of active job
+    IDs, server returns all their progress in one response. Much more
+    efficient than polling each job individually: with 20 active
+    downloads, we go from 33 req/sec (20 jobs * 1/600ms) down to
+    1 req/sec no matter how many are running. That frees Flask up to
+    respond to /api/download instantly even under heavy load."""
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids") or []
+    out = {}
+    with jobs_lock:
+        for jid in ids:
+            j = jobs.get(jid)
+            if j is not None:
+                out[jid] = dict(j)
+    return jsonify({"ok": True, "jobs": out})
+
+
 @app.route("/api/transcript", methods=["POST"])
 def api_transcript():
     data = request.get_json(silent=True) or {}
@@ -1227,7 +1360,13 @@ def api_transcript():
 
 @app.route("/api/history", methods=["GET"])
 def api_history():
-    return jsonify({"ok": True, "history": list(reversed(_load_history()))[:20]})
+    # Return everything -- the UI has its own scrollable card + filter.
+    # The cap of 20 was a legacy holdover from the very first version
+    # when history rendered as a flat non-scrolling list. Soft-cap at
+    # 1000 to avoid shipping absurd JSON payloads if someone has a
+    # truly massive library; the UI wouldn't paint 1000+ rows well
+    # anyway and the user should Clear all if it ever got that big.
+    return jsonify({"ok": True, "history": list(reversed(_load_history()))[:1000]})
 
 
 def _center_window(hwnd, width=1200, height=800):
