@@ -1,0 +1,1776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Grab</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="512x512" href="/icon.png">
+<link rel="icon" type="image/png" sizes="256x256" href="/icon.png">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
+<meta name="theme-color" content="#8a5cf6">
+<style>
+  :root {
+    --bg:        #0b0b0f;
+    --bg-1:      #14141b;
+    --bg-2:      #1c1c25;
+    --bg-3:      #262630;
+    --border:    #24242e;
+    --border-2:  #2f2f3a;
+    --text:      #e8e8ec;
+    --text-2:    #b4b4bc;
+    --text-3:    #8a8a94;
+    --text-4:    #5c5c66;
+    --accent:    #8a5cf6;
+    --accent-rgb: 138, 92, 246;
+    --accent-hover: #7845e8;
+    --accent-subtle: rgba(138, 92, 246, 0.12);
+    --accent-text: #c4aaff;
+    --danger:    #ef4444;
+    --ok:        #22c55e;
+    --warn:      #f59e0b;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'JetBrains Mono', 'Consolas', monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
+  /* min-height: 100vh (instead of height: 100%) lets the body grow
+     past the viewport when needed AND lets the 3-column grid
+     flex-grow to fill any screen height. align-items: center keeps
+     h1 + tagline centered horizontally; the grid itself stretches
+     with `align-self: stretch` so it spans full width.
+
+     padding-left accounts for the permanent 52px left-edge rail
+     (the rail is position:fixed, so content would otherwise slide
+     under it). 20px on the right for visual balance. */
+  html { height: 100%; }
+  body {
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 32px 20px 32px 72px;
+  }
+
+  /* =================================================================
+     Left edge rail -- always visible, hosts the gear button.
+     Settings panel slides out over it when the gear is clicked. The
+     rail is 52px wide, spans full viewport height, and feels like a
+     built-in sidebar rather than a floating button.
+     ================================================================= */
+  .side-rail {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: 52px;
+    background: var(--bg-1);
+    border-right: 1px solid var(--border);
+    z-index: 90;  /* below settings backdrop (150) + panel (160) */
+    display: flex; flex-direction: column;
+    align-items: center;
+    padding: 18px 0 14px;
+    gap: 10px;
+  }
+  .rail-logo {
+    width: 28px; height: 28px; margin-bottom: 4px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rail-logo .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.7);
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  .rail-btn {
+    width: 38px; height: 38px;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 8px; color: var(--text-3);
+    cursor: pointer; font-size: 18px;
+    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rail-btn:hover {
+    color: var(--text); background: var(--bg-2);
+    border-color: var(--border-2);
+  }
+  .rail-btn.active {
+    color: var(--accent); background: var(--bg-2);
+    border-color: var(--accent);
+  }
+
+  h1 {
+    font-size: 22px; font-weight: 600; margin: 0 0 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.6); }
+  .tagline { color: var(--text-3); font-size: 12px; margin: 0 0 28px; }
+
+  /* Density tokens. --card-pad drives outer card padding; the --item-*
+     tokens drive the rows INSIDE scroll lists (history rows, active
+     job cards, previous-downloads rows). Wiring the whole vertical
+     spacing chain to density means Compact actually fits ~50% more
+     rows per viewport, not just shaves a few pixels off the edges. */
+  :root {
+    --card-pad: 20px;
+    --item-pad-y: 10px;
+    --item-pad-x: 12px;
+    --item-gap: 8px;
+    --item-title-mb: 6px;
+  }
+  [data-density="compact"] {
+    --card-pad: 13px;
+    --item-pad-y: 6px;
+    --item-pad-x: 10px;
+    --item-gap: 4px;
+    --item-title-mb: 4px;
+  }
+  [data-density="spacious"] {
+    --card-pad: 26px;
+    --item-pad-y: 13px;
+    --item-pad-x: 15px;
+    --item-gap: 10px;
+    --item-title-mb: 8px;
+  }
+
+  .card {
+    width: 100%; max-width: 720px;
+    background: var(--bg-1); border: 1px solid var(--border);
+    border-radius: 14px; padding: var(--card-pad); margin-bottom: 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    transition: padding 0.2s;
+  }
+  /* "Hide keyboard hints" setting. Hides the Enter/Ctrl+V/Ctrl+Enter
+     helper line at the bottom of the URL card for a cleaner look. */
+  [data-hide-hint="true"] .hint { display: none; }
+  /* -----------------------------------------------------------------
+     3-column page layout:
+        [ HISTORY ] [ VIDEO URL + PREVIOUS DOWNLOADS ] [ ACTIVE ]
+     History (files on disk) lives on the left, the action hub (URL
+     form + preview + Previous Downloads) in the middle, and the
+     right column is reserved for in-flight downloads. Idle state
+     shows a "Downloads will appear here." placeholder so the column
+     doesn't look broken when empty.
+
+     Middle column is wider than the sides since it carries both the
+     URL form and the Previous Downloads log stacked.
+
+     Below 1100px we collapse back to a single centered column so the
+     small-window experience stays readable.
+     ----------------------------------------------------------------- */
+  .page-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr) minmax(0, 0.95fr);
+    gap: 16px;
+    width: 100%;
+    max-width: 1480px;
+    /* Fill the remaining vertical space after h1 + tagline. The
+       calc subtracts the approximate chrome height (h1 ~46px +
+       tagline ~18px + top padding 32px + gap) so the grid's top
+       never pushes content off-screen on smaller displays. */
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+  }
+  .page-grid .col {
+    display: flex; flex-direction: column;
+    gap: 16px; min-width: 0;
+    min-height: 0;
+  }
+  /* Cards inside the grid stretch to fill their column (the 720px cap
+     was for single-column layout; irrelevant here) and lose their
+     bottom margin since gap on .col handles spacing now. */
+  .page-grid .card { max-width: none; margin-bottom: 0; }
+  /* Thumbnail shrinks so the preview fits the middle column
+     without forcing a horizontal scrollbar. */
+  .page-grid .preview .thumb { width: 160px; height: 90px; }
+
+  /* Tall cards: the LAST card in each column flex-grows to consume
+     all remaining vertical space in that column, and its scroll
+     list flex-grows inside the card. This is what makes History,
+     Previous Downloads, and Active reach the bottom of the window
+     regardless of resolution (1080p / 1440p / 4K / ultrawide).
+     min-height:0 is REQUIRED on the flex children for the inner
+     overflow-y:auto to activate correctly. */
+  .page-grid .col > .card:last-child {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex; flex-direction: column;
+  }
+  .page-grid .col > .card:last-child .scroll-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+
+  /* "Downloads will appear here" placeholder in the right column when
+     #jobs has no children. Uses :has() which the WebView2/Chromium
+     runtime we ship supports. */
+  .active-empty {
+    display: none;
+    color: var(--text-4); font-size: 12px; font-style: italic;
+    padding: 28px 8px; text-align: center;
+  }
+  #active-card:has(#jobs:empty) #jobs { display: none; }
+  #active-card:has(#jobs:empty) .active-empty {
+    display: flex; align-items: center; justify-content: center;
+    flex: 1;  /* center the placeholder vertically in the tall column */
+  }
+
+  @media (max-width: 1100px) {
+    .page-grid {
+      grid-template-columns: 1fr;
+      max-width: 720px;
+      flex: 0 0 auto;  /* natural height in single-column mode */
+    }
+    .page-grid .preview .thumb { width: 160px; height: 90px; }
+    /* In stacked mode, columns don't stretch -- cap the tall cards
+       at a reasonable height so they don't own the whole page. */
+    .page-grid .col > .card:last-child {
+      flex: 0 0 auto;
+    }
+    .page-grid .col > .card:last-child .scroll-list { max-height: 360px; }
+  }
+
+  /* ----- Inline rename editor for history cards -----
+     Replaces the static title with an <input> while editing. Enter
+     saves, Esc cancels. The input sits exactly where the title was
+     so there's no layout jump. */
+  .hist-title-edit {
+    width: 100%;
+    padding: 3px 7px;
+    background: var(--bg-3);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 5px;
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-subtle);
+  }
+  .hist-title-edit:focus { border-color: var(--accent); }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0; text-transform: uppercase; letter-spacing: 1px; }
+  .card-head .ghost-btn {
+    padding: 4px 8px; background: transparent; border: 1px solid var(--border-2);
+    color: var(--text-3); border-radius: 6px; font-family: var(--font); font-size: 10px;
+    cursor: pointer; transition: all 0.12s;
+  }
+  .card-head .ghost-btn:hover { background: var(--bg-3); color: var(--text); border-color: var(--border-2); }
+  .card-head-actions { display: flex; align-items: center; gap: 8px; }
+  .count-badge {
+    display: inline-block; margin-left: 6px; padding: 1px 7px;
+    background: var(--bg-3); border: 1px solid var(--border-2);
+    border-radius: 8px; font-size: 10px; color: var(--text-3);
+    font-weight: 500; letter-spacing: 0; text-transform: none;
+    vertical-align: middle;
+  }
+  .count-badge:empty { display: none; }
+  .filter-input {
+    padding: 5px 9px; background: var(--bg-2); border: 1px solid var(--border-2);
+    border-radius: 6px; color: var(--text); font-family: var(--font); font-size: 11px;
+    outline: none; width: 140px; transition: border-color 0.12s;
+  }
+  .filter-input:focus { border-color: var(--accent); }
+  .filter-input::placeholder { color: var(--text-4); }
+  /* Scrollable history / activity lists -- keeps the page from growing
+     forever as download count goes up. Max-height picked so ~5 rows
+     are visible before scrolling kicks in. */
+  .scroll-list {
+    display: flex; flex-direction: column; gap: var(--item-gap);
+    max-height: 360px; overflow-y: auto; padding-right: 4px;
+    scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+  }
+  .scroll-list::-webkit-scrollbar { width: 8px; }
+  .scroll-list::-webkit-scrollbar-track { background: transparent; }
+  .scroll-list::-webkit-scrollbar-thumb {
+    background: var(--bg-3); border-radius: 4px; border: 2px solid var(--bg-1);
+  }
+  .scroll-list::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
+
+  /* URL input row with clipboard paste icon */
+  .url-row { display: flex; gap: 10px; }
+  .url-wrap { flex: 1; position: relative; }
+  #url-input {
+    width: 100%; padding: 12px 42px 12px 14px; background: var(--bg-2); border: 1px solid var(--border-2);
+    border-radius: 10px; color: var(--text); font-family: var(--font); font-size: 14px; outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  #url-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18); }
+  #url-input::placeholder { color: var(--text-4); }
+  #paste-btn {
+    position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+    width: 28px; height: 28px; border: none; background: transparent;
+    color: var(--text-3); border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.12s;
+  }
+  #paste-btn:hover { background: var(--bg-3); color: var(--text); }
+  #paste-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
+
+  #load-btn, #dl-btn {
+    padding: 0 22px; background: var(--accent); color: white; border: none;
+    border-radius: 10px; font-family: var(--font); font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background 0.12s, transform 0.1s;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  #load-btn:hover:not(:disabled), #dl-btn:hover:not(:disabled) { background: var(--accent-hover); }
+  #load-btn:active:not(:disabled), #dl-btn:active:not(:disabled) { transform: scale(0.97); }
+  #load-btn:disabled, #dl-btn:disabled { background: var(--bg-3); color: var(--text-4); cursor: default; }
+
+  .spinner {
+    display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Preview card */
+  .preview { display: none; gap: 16px; align-items: flex-start; }
+  .preview.active { display: flex; }
+  .preview .thumb {
+    flex-shrink: 0; width: 200px; height: 112px; border-radius: 8px; overflow: hidden;
+    background: var(--bg-3); position: relative;
+  }
+  .preview .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .preview .thumb .duration {
+    position: absolute; bottom: 6px; right: 6px;
+    background: rgba(0,0,0,0.8); color: white; padding: 2px 6px;
+    border-radius: 4px; font-family: var(--mono); font-size: 11px;
+  }
+  .preview .meta { flex: 1; min-width: 0; }
+  .preview .title {
+    font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px;
+    line-height: 1.35; overflow: hidden; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .preview .channel { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
+  .preview .avail { font-size: 10px; color: var(--text-4); font-family: var(--mono); margin-bottom: 14px; }
+
+  /* Options */
+  .options { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .options .field { display: flex; flex-direction: column; gap: 5px; }
+  .options .field.wide { grid-column: span 2; }
+  .options label { font-size: 10px; font-weight: 500; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; }
+  .options select {
+    padding: 8px 10px; background: var(--bg-2); border: 1px solid var(--border-2);
+    border-radius: 7px; color: var(--text); font-family: var(--font); font-size: 13px;
+    outline: none; cursor: pointer; transition: border-color 0.12s;
+  }
+  .options select:focus { border-color: var(--accent); }
+  .options select:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .checkbox-row { display: flex; gap: 18px; margin: 6px 0 14px; flex-wrap: wrap; }
+  .checkbox {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13px; color: var(--text-2); user-select: none;
+  }
+  .checkbox input[type="checkbox"] {
+    appearance: none; width: 16px; height: 16px; border: 1px solid var(--border-2);
+    border-radius: 4px; background: var(--bg-2); cursor: pointer; position: relative;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .checkbox input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+  .checkbox input[type="checkbox"]:checked::after {
+    content: '✓'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: white; font-size: 12px; font-weight: 700; line-height: 1;
+  }
+
+  #dl-btn { width: 100%; padding: 12px; font-size: 14px; }
+
+  /* Jobs */
+  #jobs { display: flex; flex-direction: column; gap: 10px; }
+  #jobs:empty::before {
+    content: 'No active downloads'; color: var(--text-4); font-size: 12px; font-style: italic;
+  }
+  .job {
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: var(--item-pad-y) var(--item-pad-x);
+  }
+  /* Single-row header: title on the left flex-grows, pct+rate status
+     pinned on the right. Saves a full line vs the old title-then-
+     status-row layout. */
+  .job-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: var(--item-title-mb);
+  }
+  .job-title {
+    flex: 1; min-width: 0;
+    font-size: 13px; font-weight: 500; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .job-progress-outer {
+    width: 100%; height: 5px;
+    background: var(--bg-3); border-radius: 3px; overflow: hidden;
+  }
+  .job-progress-inner {
+    height: 100%; background: var(--accent); border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+  .job.done .job-progress-inner { background: var(--ok); }
+  .job.error .job-progress-inner { background: var(--danger); }
+  .job.fading {
+    opacity: 0; transform: translateY(-6px);
+    transition: opacity 0.35s ease, transform 0.35s ease, margin 0.35s ease, height 0.35s ease, padding 0.35s ease;
+    height: 0; margin: 0; padding: 0; overflow: hidden; border: 0;
+  }
+  /* Compact status pinned to the right of the title in .job-head.
+     Separator dot between pct and rate keeps it readable in one line. */
+  .job-status {
+    flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 10px; color: var(--text-3);
+    white-space: nowrap;
+  }
+  .job-status .js-pct { color: var(--text-2); font-weight: 500; }
+  .job-status .js-sep { color: var(--text-4); }
+  .job-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .job-actions button {
+    padding: 5px 10px; background: transparent; border: 1px solid var(--border-2);
+    color: var(--text-2); border-radius: 6px; font-family: var(--font); font-size: 11px;
+    cursor: pointer; transition: all 0.12s;
+  }
+  .job-actions button:hover { background: var(--bg-3); color: var(--text); border-color: var(--accent); }
+
+  /* History */
+  #history { display: flex; flex-direction: column; gap: 8px; }
+  #history:empty::before {
+    content: 'Nothing yet. Download something.'; color: var(--text-4); font-size: 12px; font-style: italic;
+  }
+  #activity:empty::before {
+    content: 'Nothing here yet. Deleted downloads show up in this log.'; color: var(--text-4); font-size: 12px; font-style: italic;
+  }
+  .hist-empty { color: var(--text-4); font-size: 12px; font-style: italic; padding: 4px 2px; }
+  .hist-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: var(--item-pad-y) var(--item-pad-x);
+    background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 12px;
+  }
+  .hist-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .hist-title { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .hist-sub { color: var(--text-4); font-family: var(--mono); font-size: 10px; }
+  .hist-actions { display: flex; gap: 5px; flex-shrink: 0; }
+  .hist-actions button {
+    padding: 4px 9px; background: transparent; border: 1px solid var(--border-2);
+    color: var(--text-3); border-radius: 5px; font-family: var(--font); font-size: 10px;
+    cursor: pointer; transition: all 0.12s; display: inline-flex; align-items: center; gap: 3px;
+  }
+  .hist-actions button:hover { background: var(--bg-3); color: var(--text); border-color: var(--accent); }
+  .hist-actions button.danger:hover { color: var(--danger); border-color: var(--danger); }
+  .hist-actions button svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 2; }
+  /* Combo button: main button + × for deleting just that sidecar.
+     Small gap so the buttons read as related but visually distinct --
+     the shared-border approach had a hover-state glitch. */
+  .hist-actions .combo-btn {
+    display: inline-flex; align-items: stretch; gap: 3px;
+  }
+  .hist-actions .combo-btn button:last-child {
+    padding-left: 7px; padding-right: 7px; min-width: 20px;
+    font-size: 11px; font-weight: 600;
+  }
+
+  /* =================================================================
+     Settings side panel.
+     Gear button top-right of the viewport opens a slide-in panel
+     from the right. Panel contains appearance (accent swatches),
+     download defaults (format, quality, sidecars), and About.
+     All values persist to localStorage via the SETTINGS JS object.
+     ================================================================= */
+  .settings-back {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    z-index: 150; opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .settings-back.active { opacity: 1; pointer-events: auto; }
+  .settings-panel {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: 340px; max-width: 100vw;
+    background: var(--bg-1); border-right: 1px solid var(--border-2);
+    z-index: 160; transform: translateX(-105%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex; flex-direction: column;
+    box-shadow: 8px 0 24px rgba(0,0,0,0.4);
+  }
+  .settings-panel.active { transform: translateX(0); }
+  .settings-head {
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .settings-head h2 {
+    font-size: 13px; font-weight: 600; color: var(--text-2);
+    margin: 0; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .settings-close {
+    background: transparent; border: none; color: var(--text-3);
+    font-size: 22px; cursor: pointer; line-height: 1;
+    padding: 0 6px; border-radius: 4px;
+    transition: color 0.12s;
+  }
+  .settings-close:hover { color: var(--text); }
+  .settings-body {
+    flex: 1; overflow-y: auto; padding: 20px 20px 40px;
+    scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+  }
+  .settings-body::-webkit-scrollbar { width: 8px; }
+  .settings-body::-webkit-scrollbar-track { background: transparent; }
+  .settings-body::-webkit-scrollbar-thumb {
+    background: var(--bg-3); border-radius: 4px; border: 2px solid var(--bg-1);
+  }
+
+  .settings-section { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .settings-section:last-of-type { border-bottom: none; }
+  .settings-section h3 {
+    font-size: 10px; font-weight: 600; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 1px;
+    margin: 0 0 14px;
+  }
+  .settings-section > label {
+    display: block; font-size: 10px; color: var(--text-3);
+    margin: 12px 0 5px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .settings-section > label:first-of-type { margin-top: 0; }
+  .settings-section select {
+    width: 100%; padding: 8px 10px;
+    background: var(--bg-2); border: 1px solid var(--border-2);
+    color: var(--text); border-radius: 6px; font-family: var(--font); font-size: 12px;
+    outline: none; transition: border-color 0.12s;
+  }
+  .settings-section select:focus { border-color: var(--accent); }
+  .settings-section .checkbox-set {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer; font-size: 12px; color: var(--text-2);
+    text-transform: none; letter-spacing: 0;
+    margin: 12px 0 0;
+  }
+  .settings-section .checkbox-set input { margin: 0; cursor: pointer; }
+
+  .accent-swatches {
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px;
+  }
+  .swatch {
+    width: 100%; aspect-ratio: 1;
+    border-radius: 7px; cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s;
+    position: relative;
+  }
+  .swatch:hover { transform: scale(1.12); }
+  .swatch.active { border-color: var(--text); }
+  .swatch.active::after {
+    content: '✓'; position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700; font-size: 14px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  }
+
+  .about-line { font-size: 12px; color: var(--text-3); margin: 4px 0; }
+  .about-link {
+    display: inline-block; margin-top: 10px;
+    color: var(--accent); text-decoration: none; font-size: 12px;
+    border-bottom: 1px dotted currentColor; padding-bottom: 1px;
+  }
+  .about-link:hover { color: var(--accent-text); }
+
+  .primary-lite {
+    width: 100%; padding: 10px;
+    background: var(--bg-2); border: 1px solid var(--border-2);
+    color: var(--text); border-radius: 8px;
+    font-family: var(--font); font-size: 12px;
+    cursor: pointer; transition: all 0.12s;
+  }
+  .primary-lite:hover {
+    background: var(--bg-3); border-color: var(--accent);
+  }
+
+  .settings-reset {
+    width: 100%; padding: 10px; margin-top: 4px;
+    background: transparent; border: 1px solid var(--border-2);
+    color: var(--text-3); border-radius: 8px;
+    font-family: var(--font); font-size: 11px;
+    cursor: pointer; transition: all 0.12s;
+  }
+  .settings-reset:hover { color: var(--danger); border-color: var(--danger); }
+
+  /* Transcript modal */
+  .modal-back {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+    animation: fade-in 0.15s ease;
+  }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  .modal-back.active { display: flex; }
+  .modal {
+    background: var(--bg-1); border: 1px solid var(--border-2);
+    border-radius: 16px; padding: 26px 28px; width: min(95vw, 1000px); height: min(92vh, 800px);
+    display: flex; flex-direction: column; gap: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(var(--accent-rgb), 0.08);
+  }
+  .modal h3 {
+    font-size: 17px; font-weight: 600; margin: 0; color: var(--text);
+    display: flex; align-items: center; gap: 10px; line-height: 1.3;
+  }
+  .modal h3::before {
+    content: ''; display: inline-block; width: 4px; height: 18px;
+    background: var(--accent); border-radius: 2px;
+  }
+  .modal textarea {
+    flex: 1; min-height: 0; background: var(--bg-2); border: 1px solid var(--border-2);
+    border-radius: 10px; padding: 18px 22px; color: var(--text);
+    font-family: var(--font); font-size: 14px; line-height: 1.75; letter-spacing: 0.1px;
+    resize: none; outline: none;
+    /* Premium dark scrollbar, WebKit */
+    scrollbar-width: thin; scrollbar-color: var(--bg-3) var(--bg-1);
+  }
+  .modal textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15); }
+  .modal textarea::-webkit-scrollbar { width: 12px; height: 12px; }
+  .modal textarea::-webkit-scrollbar-track {
+    background: var(--bg-1); border-radius: 0 10px 10px 0;
+  }
+  .modal textarea::-webkit-scrollbar-thumb {
+    background: var(--bg-3); border-radius: 6px; border: 3px solid var(--bg-2);
+    transition: background 0.15s;
+  }
+  .modal textarea::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
+  .modal textarea::-webkit-scrollbar-thumb:active { background: var(--accent); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  .modal-actions button {
+    padding: 8px 14px; border-radius: 7px; border: 1px solid var(--border-2);
+    background: var(--bg-2); color: var(--text); font-family: var(--font);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .modal-actions button:hover { background: var(--bg-3); }
+  .modal-actions button.primary:hover { background: var(--accent-hover); }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(12px);
+    background: var(--bg-2); border: 1px solid var(--border-2); color: var(--text);
+    padding: 10px 18px; border-radius: 8px; font-size: 12px;
+    opacity: 0; transition: opacity 0.2s, transform 0.2s; pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.err { border-color: var(--danger); color: var(--danger); }
+  #toast.ok  { border-color: var(--ok); color: var(--ok); }
+
+  .hint { color: var(--text-4); font-size: 11px; margin-top: 8px; font-style: italic; }
+  .kbd {
+    display: inline-block; padding: 1px 5px; background: var(--bg-3);
+    border: 1px solid var(--border-2); border-radius: 3px;
+    font-family: var(--mono); font-size: 10px; color: var(--text-3);
+  }
+</style>
+</head>
+<body>
+
+  <!-- Permanent left edge rail. Always visible, hosts the gear button
+       and the brand dot. The full settings panel slides out OVER the
+       rail when opened, so the gear feels like part of the sidebar
+       rather than a floating orphan. -->
+  <aside class="side-rail" aria-label="Utility rail">
+    <div class="rail-logo" title="YT Grab"><span class="dot"></span></div>
+    <button class="rail-btn" id="settings-btn" onclick="openSettings()"
+            title="Settings" aria-label="Settings">⚙</button>
+  </aside>
+
+  <!-- Settings panel overlay -->
+  <div class="settings-back" id="settings-back" onclick="closeSettings()"></div>
+  <aside class="settings-panel" id="settings-panel" aria-label="Settings panel">
+    <div class="settings-head">
+      <h2>Settings</h2>
+      <button class="settings-close" onclick="closeSettings()" aria-label="Close">×</button>
+    </div>
+    <div class="settings-body">
+
+      <section class="settings-section">
+        <h3>Appearance</h3>
+        <label>Accent color</label>
+        <div class="accent-swatches" id="accent-swatches"></div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Interface</h3>
+        <label>Density</label>
+        <select id="set-density">
+          <option value="compact">Compact</option>
+          <option value="comfortable" selected>Comfortable</option>
+          <option value="spacious">Spacious</option>
+        </select>
+        <label class="checkbox-set">
+          <input type="checkbox" id="set-hide-hint">
+          <span>Hide keyboard shortcut hints</span>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>About</h3>
+        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.0.0</div>
+        <div class="about-line">Local. Private. Premium.</div>
+        <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
+        <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
+      </section>
+
+      <button class="settings-reset" onclick="resetSettings()">Reset all settings</button>
+    </div>
+  </aside>
+
+  <h1><span class="dot"></span> YT Grab</h1>
+  <p class="tagline">Local. Private. Premium.</p>
+
+  <!-- ========================================================
+       3-column page layout.
+
+       LEFT    (History):      files currently on disk -- rename /
+                               open / redownload / delete.
+       MIDDLE  (Video URL +    URL paste, preview + format picker on
+                Previous):     top; Previous Downloads log stacked
+                               directly below so the middle column
+                               is the "hub where you trigger work
+                               and review what's been done."
+       RIGHT   (Active):       where running downloads live. Empty
+                               when idle -- downloads slide in here
+                               the moment you hit the button.
+
+       Below 1100px the CSS collapses this to a single column so the
+       small-window experience stays clean.
+       ======================================================== -->
+  <div class="page-grid">
+
+    <!-- ========= LEFT COLUMN: History ========= -->
+    <div class="col">
+      <div class="card">
+        <div class="card-head">
+          <h2>History <span class="count-badge" id="history-count"></span></h2>
+          <div class="card-head-actions">
+            <input type="text" class="filter-input" id="history-filter" placeholder="Filter..." oninput="renderHistory()">
+            <button class="ghost-btn" onclick="clearHistory()">Clear all</button>
+          </div>
+        </div>
+        <div class="scroll-list" id="history"></div>
+      </div>
+    </div>
+
+    <!-- ========= MIDDLE COLUMN: Video URL + Preview + Previous Downloads ========= -->
+    <div class="col">
+      <!-- URL + load -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Video URL</h2>
+        </div>
+        <div class="url-row">
+          <div class="url-wrap">
+            <input type="text" id="url-input" placeholder="Paste a YouTube URL or Shorts link..." autocomplete="off" autofocus>
+            <button id="paste-btn" onclick="pasteFromClipboard()" title="Paste from clipboard">
+              <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+          <button id="load-btn" onclick="loadInfo()">Load info</button>
+        </div>
+        <div class="hint"><span class="kbd">Enter</span> to load · <span class="kbd">Ctrl+V</span> to paste & load · <span class="kbd">Ctrl+Enter</span> to download · <span class="kbd">Ctrl+Z</span> to undo delete</div>
+      </div>
+
+      <!-- Preview + options -->
+      <div class="card preview" id="preview">
+        <div class="thumb">
+          <img id="pv-thumb" alt="">
+          <div class="duration" id="pv-duration">—</div>
+        </div>
+        <div class="meta">
+          <div class="title" id="pv-title">—</div>
+          <div class="channel" id="pv-channel">—</div>
+          <div class="avail" id="pv-avail"></div>
+          <div class="options">
+            <div class="field">
+              <label>Format</label>
+              <select id="opt-format" onchange="onFormatChange()">
+                <optgroup label="Video">
+                  <option value="mp4" selected>MP4</option>
+                  <option value="mkv">MKV</option>
+                  <option value="webm">WEBM</option>
+                </optgroup>
+                <optgroup label="Audio">
+                  <option value="mp3">MP3</option>
+                  <option value="m4a">M4A</option>
+                  <option value="opus">OPUS</option>
+                  <option value="wav">WAV (lossless)</option>
+                  <option value="flac">FLAC (lossless)</option>
+                </optgroup>
+              </select>
+            </div>
+            <div class="field" id="field-quality">
+              <label>Quality</label>
+              <select id="opt-quality">
+                <option value="best" selected>Best available</option>
+                <option value="2160">2160p (4K)</option>
+                <option value="1440">1440p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p</option>
+              </select>
+            </div>
+            <div class="field" id="field-bitrate" style="display:none">
+              <label>Bitrate</label>
+              <select id="opt-bitrate">
+                <option value="128">128 kbps</option>
+                <option value="192" selected>192 kbps</option>
+                <option value="256">256 kbps</option>
+                <option value="320">320 kbps</option>
+              </select>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <label class="checkbox">
+              <input type="checkbox" id="opt-transcript">
+              <span>Save transcript (.txt)</span>
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" id="opt-thumbnail">
+              <span>Save thumbnail (.jpg)</span>
+            </label>
+          </div>
+          <button id="dl-btn" onclick="startDownload()">Download</button>
+        </div>
+      </div>
+
+      <!-- Previous Downloads (log of everything you've ever downloaded --
+           browser-history view. Files are gone from disk; redownload
+           from here or clear the log itself.) -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Previous Downloads <span class="count-badge" id="activity-count"></span></h2>
+          <div class="card-head-actions">
+            <input type="text" class="filter-input" id="activity-filter" placeholder="Filter..." oninput="renderActivity()">
+            <button class="ghost-btn" onclick="clearActivity()">Clear all</button>
+          </div>
+        </div>
+        <div class="scroll-list" id="activity"></div>
+      </div>
+    </div>
+
+    <!-- ========= RIGHT COLUMN: Active downloads ========= -->
+    <!-- Dedicated space for in-flight downloads. Empty when idle
+         (shows a placeholder); populates the moment a job starts.
+         Completed jobs fade out ~2s after 100% and are tracked in
+         History instead. -->
+    <div class="col">
+      <div class="card" id="active-card">
+        <div class="card-head"><h2>Active</h2></div>
+        <div class="scroll-list" id="jobs"></div>
+        <div class="active-empty" id="active-empty">
+          Downloads will appear here.
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.page-grid -->
+
+  <!-- Transcript modal -->
+  <div class="modal-back" id="modal-back">
+    <div class="modal">
+      <h3 id="modal-title">Transcript</h3>
+      <textarea id="modal-text" readonly></textarea>
+      <div class="modal-actions">
+        <button onclick="copyTranscript()">Copy</button>
+        <button onclick="downloadTranscript()">Save .txt</button>
+        <button class="primary" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+<script>
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+  let currentInfo = null;
+  const activeJobs = new Map();
+
+  // Which formats are considered "video" vs "audio" -- drives UI show/hide
+  const VIDEO_FORMATS = new Set(['mp4', 'mkv', 'webm']);
+  const LOSSLESS_AUDIO = new Set(['wav', 'flac']);
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+  function toast(msg, kind) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'show' + (kind ? ' ' + kind : '');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.className = ''; }, 2800);
+  }
+
+  function fmtDuration(s) {
+    if (!s) return '—';
+    s = Math.round(s);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    return `${m}:${String(sec).padStart(2,'0')}`;
+  }
+
+  function fmtRelative(iso) {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const diff = Math.max(0, Math.floor((now - then) / 1000));
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' hr ago';
+    if (diff < 86400 * 7) return Math.floor(diff / 86400) + ' day' + (diff >= 86400 * 2 ? 's' : '') + ' ago';
+    return iso.replace('T', ' ').slice(0, 16);
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function isLikelyUrl(s) {
+    return /^https?:\/\/\S+/i.test((s || '').trim());
+  }
+
+  async function api(method, path, body) {
+    const opts = { method, headers: {} };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(path, opts);
+    return r.json().catch(() => ({ ok: false, error: 'bad JSON from server' }));
+  }
+
+  // ===========================================================================
+  // Settings: persisted to localStorage under yt_grab_settings_v1.
+  // Applied on boot (accent color), used as defaults for download form.
+  // ===========================================================================
+  // Tailwind-palette-ish set of 14 accents. Each has hex (primary),
+  // rgb (for alpha-composited subtle/shadow colors), hover (slightly
+  // darker), and text (lighter, readable on dark bg).
+  const ACCENTS = {
+    purple:  { hex: '#8a5cf6', rgb: '138, 92, 246',  hover: '#7845e8', text: '#c4aaff' },
+    violet:  { hex: '#a855f7', rgb: '168, 85, 247',  hover: '#9333ea', text: '#d8b4fe' },
+    indigo:  { hex: '#6366f1', rgb: '99, 102, 241',  hover: '#4f46e5', text: '#a5b4fc' },
+    blue:    { hex: '#3b82f6', rgb: '59, 130, 246',  hover: '#2563eb', text: '#93c5fd' },
+    sky:     { hex: '#0ea5e9', rgb: '14, 165, 233',  hover: '#0284c7', text: '#7dd3fc' },
+    cyan:    { hex: '#06b6d4', rgb: '6, 182, 212',   hover: '#0891b2', text: '#67e8f9' },
+    teal:    { hex: '#14b8a6', rgb: '20, 184, 166',  hover: '#0d9488', text: '#5eead4' },
+    emerald: { hex: '#10b981', rgb: '16, 185, 129',  hover: '#059669', text: '#6ee7b7' },
+    lime:    { hex: '#84cc16', rgb: '132, 204, 22',  hover: '#65a30d', text: '#bef264' },
+    amber:   { hex: '#f59e0b', rgb: '245, 158, 11',  hover: '#d97706', text: '#fcd34d' },
+    orange:  { hex: '#f97316', rgb: '249, 115, 22',  hover: '#ea580c', text: '#fdba74' },
+    red:     { hex: '#ef4444', rgb: '239, 68, 68',   hover: '#dc2626', text: '#fca5a5' },
+    rose:    { hex: '#f43f5e', rgb: '244, 63, 94',   hover: '#e11d48', text: '#fda4af' },
+    pink:    { hex: '#ec4899', rgb: '236, 72, 153',  hover: '#db2777', text: '#f9a8d4' },
+  };
+  const SETTINGS_KEY = 'yt_grab_settings_v1';
+  const DEFAULT_SETTINGS = {
+    accent: 'purple',         // color theme
+    density: 'comfortable',   // compact | comfortable | spacious
+    hideHint: false,          // hide the "Enter to load · Ctrl+V..." hint line
+  };
+
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return { ...DEFAULT_SETTINGS };
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    } catch { return { ...DEFAULT_SETTINGS }; }
+  }
+  function saveSettings(s) {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+  }
+  let SETTINGS = loadSettings();
+
+  function applyAccent(name) {
+    const c = ACCENTS[name] || ACCENTS.purple;
+    const s = document.documentElement.style;
+    s.setProperty('--accent', c.hex);
+    s.setProperty('--accent-rgb', c.rgb);
+    s.setProperty('--accent-hover', c.hover);
+    s.setProperty('--accent-subtle', `rgba(${c.rgb}, 0.12)`);
+    s.setProperty('--accent-text', c.text);
+    // Also update the theme-color meta so the title bar (if WebView2
+    // supports it) picks up the new hue.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', c.hex);
+  }
+
+  function applyUISettings() {
+    // Density + hint toggles are CSS selectors keyed off <html> data
+    // attributes. Setting them here applies instantly -- no reload.
+    document.documentElement.setAttribute('data-density', SETTINGS.density);
+    document.documentElement.setAttribute('data-hide-hint', String(!!SETTINGS.hideHint));
+  }
+
+  function renderSwatches() {
+    const box = document.getElementById('accent-swatches');
+    if (!box) return;
+    box.innerHTML = '';
+    Object.entries(ACCENTS).forEach(([name, c]) => {
+      const el = document.createElement('div');
+      el.className = 'swatch' + (SETTINGS.accent === name ? ' active' : '');
+      el.style.background = c.hex;
+      el.title = name[0].toUpperCase() + name.slice(1);
+      el.onclick = () => {
+        SETTINGS.accent = name;
+        saveSettings(SETTINGS);
+        applyAccent(name);
+        renderSwatches();
+      };
+      box.appendChild(el);
+    });
+  }
+
+  function openSettings() {
+    document.getElementById('settings-panel').classList.add('active');
+    document.getElementById('settings-back').classList.add('active');
+    // Sync panel controls to current state
+    const density = document.getElementById('set-density');
+    const hideHint = document.getElementById('set-hide-hint');
+    if (density) density.value = SETTINGS.density;
+    if (hideHint) hideHint.checked = !!SETTINGS.hideHint;
+    renderSwatches();
+  }
+  function closeSettings() {
+    document.getElementById('settings-panel').classList.remove('active');
+    document.getElementById('settings-back').classList.remove('active');
+  }
+
+  function wireSettingsControls() {
+    // UI knobs: density + hide-hint. Both mutate SETTINGS, save, and
+    // re-apply the CSS data-attributes so changes land instantly.
+    const density = document.getElementById('set-density');
+    if (density) density.onchange = () => {
+      SETTINGS.density = density.value;
+      saveSettings(SETTINGS);
+      applyUISettings();
+    };
+    const hideHint = document.getElementById('set-hide-hint');
+    if (hideHint) hideHint.onchange = () => {
+      SETTINGS.hideHint = hideHint.checked;
+      saveSettings(SETTINGS);
+      applyUISettings();
+    };
+  }
+
+  function resetSettings() {
+    if (!confirm('Reset all settings to defaults?')) return;
+    SETTINGS = { ...DEFAULT_SETTINGS };
+    saveSettings(SETTINGS);
+    applyAccent(SETTINGS.accent);
+    applyUISettings();
+    openSettings();  // re-sync the panel controls
+    toast('Settings reset', 'ok');
+  }
+
+  // Apply accent + UI settings immediately so the page renders in the
+  // chosen theme even before DOMContentLoaded (no flash of defaults).
+  applyAccent(SETTINGS.accent);
+  applyUISettings();
+
+  // ---------------------------------------------------------------------------
+  // Format mode (video vs audio) -- show the right extras
+  // ---------------------------------------------------------------------------
+  function onFormatChange() {
+    const fmt = document.getElementById('opt-format').value;
+    const isVideo = VIDEO_FORMATS.has(fmt);
+    const isLossless = LOSSLESS_AUDIO.has(fmt);
+    document.getElementById('field-quality').style.display = isVideo ? '' : 'none';
+    document.getElementById('field-bitrate').style.display = (!isVideo && !isLossless) ? '' : 'none';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Clipboard paste
+  // ---------------------------------------------------------------------------
+  async function pasteFromClipboard() {
+    try {
+      const txt = await navigator.clipboard.readText();
+      if (!txt) { toast('Clipboard is empty', 'err'); return; }
+      const input = document.getElementById('url-input');
+      input.value = txt.trim();
+      input.focus();
+      if (isLikelyUrl(input.value)) {
+        loadInfo();
+      } else {
+        toast('Pasted (not a URL)', 'ok');
+      }
+    } catch (e) {
+      toast('Clipboard access blocked by browser', 'err');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Load info
+  // ---------------------------------------------------------------------------
+  async function loadInfo() {
+    const url = document.getElementById('url-input').value.trim();
+    if (!url) { toast('Paste a URL first', 'err'); return; }
+    const btn = document.getElementById('load-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Loading';
+    try {
+      const resp = await api('POST', '/api/info', { url });
+      if (!resp.ok) { toast(resp.error || 'Could not load info', 'err'); return; }
+      currentInfo = resp.info;
+      renderPreview(resp.info);
+      toast('Ready to download', 'ok');
+    } catch (e) {
+      toast('Network error', 'err');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Load info';
+    }
+  }
+
+  function renderPreview(info) {
+    document.getElementById('pv-thumb').src = info.thumbnail || '';
+    document.getElementById('pv-title').textContent = info.title || '—';
+    document.getElementById('pv-channel').textContent = info.channel || '—';
+    document.getElementById('pv-duration').textContent = fmtDuration(info.duration);
+
+    // Cap numeric quality options by what's actually available. The
+    // "best" option is always enabled -- it'll pick whatever the
+    // highest-res stream on this video is.
+    const q = document.getElementById('opt-quality');
+    const available = new Set((info.available_heights || []).map(String));
+    Array.from(q.options).forEach(opt => {
+      if (opt.value === 'best') { opt.disabled = false; return; }
+      opt.disabled = available.size > 0 && !available.has(opt.value);
+      if (opt.disabled && opt.selected) opt.selected = false;
+    });
+    // If the previously-selected option got disabled, fall back to "best".
+    if (!q.value || (q.selectedOptions[0] && q.selectedOptions[0].disabled)) {
+      const bestOpt = Array.from(q.options).find(o => o.value === 'best');
+      if (bestOpt) bestOpt.selected = true;
+    }
+
+    // Availability subtitle
+    const heights = (info.available_heights || []).slice(0, 4);
+    document.getElementById('pv-avail').textContent = heights.length
+      ? 'Available: ' + heights.map(h => h + 'p').join(' · ')
+      : '';
+
+    document.getElementById('preview').classList.add('active');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Download
+  // ---------------------------------------------------------------------------
+  async function startDownload() {
+    if (!currentInfo) { toast('Load info first', 'err'); return; }
+    const url = document.getElementById('url-input').value.trim();
+    const format_ext = document.getElementById('opt-format').value;
+    const isVideo = VIDEO_FORMATS.has(format_ext);
+    const resolution = document.getElementById('opt-quality').value;
+    const audio_bitrate = document.getElementById('opt-bitrate').value;
+    const want_transcript = document.getElementById('opt-transcript').checked;
+    const want_thumbnail = document.getElementById('opt-thumbnail').checked;
+    const btn = document.getElementById('dl-btn');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.innerHTML = '<span class="spinner"></span> Starting';
+    const resp = await api('POST', '/api/download', {
+      url,
+      format_ext,
+      resolution: isVideo ? resolution : null,
+      audio_bitrate: isVideo ? null : audio_bitrate,
+      want_transcript,
+      want_thumbnail,
+      title: currentInfo.title,
+    });
+    btn.disabled = false;
+    btn.textContent = original;
+    if (!resp.ok) { toast(resp.error || 'Could not start download', 'err'); return; }
+    toast('Download started', 'ok');
+    addJob(resp.job_id, currentInfo.title);
+  }
+
+  function addJob(job_id, title) {
+    const jobs = document.getElementById('jobs');
+    const div = document.createElement('div');
+    div.className = 'job';
+    div.id = 'job-' + job_id;
+    div.innerHTML = `
+      <div class="job-head">
+        <div class="job-title">${escapeHtml(title)}</div>
+        <div class="job-status">
+          <span class="js-pct">0%</span>
+          <span class="js-sep">·</span>
+          <span class="js-rate">pending…</span>
+        </div>
+      </div>
+      <div class="job-progress-outer"><div class="job-progress-inner" style="width:0%"></div></div>
+      <div class="job-actions" style="display:none;">
+        <button class="open-file">Show in folder</button>
+        <button class="view-transcript" style="display:none;">View transcript</button>
+      </div>`;
+    jobs.insertBefore(div, jobs.firstChild);
+    const pollTimer = setInterval(() => pollJob(job_id), 600);
+    activeJobs.set(job_id, { pollTimer, element: div });
+  }
+
+  async function pollJob(job_id) {
+    const resp = await api('GET', '/api/progress/' + job_id);
+    if (!resp.ok) return;
+    const job = resp.job;
+    const el = document.getElementById('job-' + job_id);
+    if (!el) return;
+    const bar = el.querySelector('.job-progress-inner');
+    const pct = el.querySelector('.js-pct');
+    const rate = el.querySelector('.js-rate');
+    bar.style.width = (job.percent || 0) + '%';
+    pct.textContent = (job.percent || 0) + '%';
+    if (job.status === 'downloading') {
+      rate.textContent = job.speed ? `${job.speed} · ETA ${job.eta || '—'}` : (job.eta || 'downloading…');
+    } else if (job.status === 'pending') {
+      rate.textContent = 'starting…';
+    } else if (job.status === 'done') {
+      el.classList.add('done');
+      rate.textContent = '✓ complete';
+      pct.textContent = '100%';
+      stopPolling(job_id);
+      toast('Done: ' + (job.title || 'download'), 'ok');
+      loadHistory();
+      loadActivity();
+      // Auto-clear from Active after a short victory display -- the
+      // download is already in History with Open + Text buttons, no
+      // reason to leave it cluttering Active forever.
+      setTimeout(() => {
+        if (!el.parentNode) return;
+        el.classList.add('fading');
+        setTimeout(() => { try { el.remove(); } catch (e) {} }, 400);
+      }, 2000);
+    } else if (job.status === 'error') {
+      el.classList.add('error');
+      rate.textContent = '✗ ' + (job.error || 'failed');
+      stopPolling(job_id);
+      toast('Download failed', 'err');
+    }
+  }
+
+  function stopPolling(job_id) {
+    const rec = activeJobs.get(job_id);
+    if (rec) { clearInterval(rec.pollTimer); activeJobs.delete(job_id); }
+  }
+
+  async function openPath(path) {
+    if (!path) return;
+    const r = await api('POST', '/api/open_folder', { path });
+    if (!r.ok) toast(r.error || 'Could not open folder', 'err');
+  }
+
+  // ---------------------------------------------------------------------------
+  // History
+  // ---------------------------------------------------------------------------
+  let _historyCache = [];   // filled by loadHistory, consumed by renderHistory
+
+  function _matchesFilter(item, query) {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    const title = (item.title || '').toLowerCase();
+    const channel = (item.channel || '').toLowerCase();
+    const url = (item.source_url || '').toLowerCase();
+    return title.includes(q) || channel.includes(q) || url.includes(q);
+  }
+
+  function displayTitle(item) {
+    // If this was a duplicate download, its folder name has a trailing
+    // " (N)" that our rename code added to keep folders distinct on
+    // disk. Surface that same suffix in the UI title so the user can
+    // tell two downloads of the same video apart at a glance.
+    const title = item.title || 'Untitled';
+    const folder = item.folder || '';
+    if (folder) {
+      // Get just the folder name (last segment of the path)
+      const folderName = folder.split(/[\\/]/).pop() || '';
+      const m = folderName.match(/\s\((\d+)\)$/);
+      if (m) return title + ' (' + m[1] + ')';
+    }
+    return title;
+  }
+
+  async function loadHistory() {
+    const r = await api('GET', '/api/history');
+    if (!r.ok) return;
+    _historyCache = r.history || [];
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const box = document.getElementById('history');
+    const filter = (document.getElementById('history-filter') || {}).value || '';
+    const items = _historyCache.filter(i => _matchesFilter(i, filter));
+    const countEl = document.getElementById('history-count');
+    if (countEl) {
+      countEl.textContent = filter
+        ? `${items.length}/${_historyCache.length}`
+        : (_historyCache.length > 0 ? String(_historyCache.length) : '');
+    }
+    box.innerHTML = '';
+    items.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'hist-item';
+      let meta;
+      if (item.format_group === 'audio') {
+        meta = (item.format_ext || 'audio').toUpperCase() + (item.audio_bitrate ? ` · ${item.audio_bitrate}kbps` : '');
+      } else {
+        meta = (item.format_ext || 'video').toUpperCase() + (item.resolution && item.resolution !== '—' ? ` · ${item.resolution}p` : '');
+      }
+      const when = fmtRelative(item.completed_at);
+      // Download duration, if tracked (newer entries have this)
+      if (item.duration_seconds !== undefined && item.duration_seconds !== null) {
+        const dur = item.duration_seconds;
+        let dstr;
+        if (dur < 60) dstr = dur + 's';
+        else if (dur < 3600) dstr = Math.floor(dur / 60) + 'm ' + (dur % 60) + 's';
+        else dstr = Math.floor(dur / 3600) + 'h ' + Math.floor((dur % 3600) / 60) + 'm';
+        meta += ' · ' + dstr;
+      }
+      div.innerHTML = `
+        <div class="hist-info">
+          <div class="hist-title">${escapeHtml(displayTitle(item))}</div>
+          <div class="hist-sub">${escapeHtml(meta)} · ${escapeHtml(when)}</div>
+        </div>
+        <div class="hist-actions">
+          <button class="open-btn" title="Show in folder">Open</button>
+          <button class="rename-btn" title="Rename (click or press F2)">✎</button>
+          ${item.transcript_path ? `
+            <span class="combo-btn">
+              <button class="t-btn" title="View transcript">Text</button>
+              <button class="t-del danger" title="Delete transcript only">×</button>
+            </span>` : ''}
+          ${item.thumbnail_path ? `
+            <span class="combo-btn">
+              <button class="thumb-btn" title="Open thumbnail image">Thumb</button>
+              <button class="thumb-del danger" title="Delete thumbnail only">×</button>
+            </span>` : ''}
+          <button class="redl-btn" title="Download again with current settings">↻</button>
+          <button class="del-btn danger" title="Delete everything (whole folder)">✕</button>
+        </div>`;
+      div.querySelector('.open-btn').onclick = () => openPath(item.filename);
+      div.querySelector('.rename-btn').onclick = () => startRename(div, item);
+      const tBtn = div.querySelector('.t-btn');
+      if (tBtn) tBtn.onclick = () => showTranscriptFromHistory(item);
+      const tDel = div.querySelector('.t-del');
+      if (tDel) tDel.onclick = () => deleteSidecar(item.id, 'transcript');
+      const thumbBtn = div.querySelector('.thumb-btn');
+      if (thumbBtn) thumbBtn.onclick = () => openPath(item.thumbnail_path);
+      const thumbDel = div.querySelector('.thumb-del');
+      if (thumbDel) thumbDel.onclick = () => deleteSidecar(item.id, 'thumbnail');
+      div.querySelector('.redl-btn').onclick = () => redownload(item);
+      div.querySelector('.del-btn').onclick = () => deleteHistoryItem(item.id);
+      // Double-click the title itself to rename -- convention from
+      // Windows Explorer. Covers people who don't notice the pencil.
+      const titleEl = div.querySelector('.hist-title');
+      if (titleEl) titleEl.ondblclick = () => startRename(div, item);
+      box.appendChild(div);
+    });
+  }
+
+  async function deleteHistoryItem(id) {
+    const r = await api('POST', '/api/history/delete/' + encodeURIComponent(id));
+    if (!r.ok) { toast(r.error || 'Could not delete', 'err'); return; }
+    toast('Moved to Recycle Bin · Ctrl+Z to undo', 'ok');
+    loadHistory();
+    loadActivity();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inline rename: swap the .hist-title text for an <input> in-place.
+  // Enter saves, Esc cancels, blur saves. Matches Windows Explorer F2
+  // rename UX (dblclick or pencil button to enter edit mode).
+  // ---------------------------------------------------------------------------
+  function startRename(rowEl, item) {
+    const titleEl = rowEl.querySelector('.hist-title');
+    if (!titleEl || rowEl.classList.contains('editing')) return;
+    rowEl.classList.add('editing');
+
+    // Use the clean title (not the " (N)" suffixed displayTitle) so the
+    // user edits just the base title. Folder suffix regenerates server-side.
+    const original = item.title || 'Untitled';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'hist-title-edit';
+    input.value = original;
+    input.spellcheck = false;
+
+    // Swap.
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let finished = false;
+    const restore = (newTitle) => {
+      if (finished) return;
+      finished = true;
+      rowEl.classList.remove('editing');
+      const span = document.createElement('div');
+      span.className = 'hist-title';
+      span.textContent = newTitle;
+      span.ondblclick = () => startRename(rowEl, { ...item, title: newTitle });
+      input.replaceWith(span);
+    };
+
+    const commit = async () => {
+      if (finished) return;
+      const newTitle = input.value.trim();
+      if (!newTitle || newTitle === original) {
+        restore(displayTitle(item));
+        return;
+      }
+      // Lock out further edits while the backend renames on disk.
+      input.disabled = true;
+      const r = await api('POST', '/api/history/rename/' + encodeURIComponent(item.id),
+                          { title: newTitle });
+      if (!r.ok) {
+        toast(r.error || 'Rename failed', 'err');
+        input.disabled = false;
+        return;  // keep editing so the user can retry
+      }
+      toast('Renamed', 'ok');
+      // Easiest way to get the updated stem + path everywhere is to
+      // refresh the whole list -- the server has already rewritten the
+      // entry and the files on disk.
+      loadHistory();
+    };
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); restore(displayTitle(item)); }
+    });
+    input.addEventListener('blur', () => {
+      // Blur commits, matching Explorer. If the user clicked a different
+      // row they probably meant to abandon -- but Explorer commits on
+      // blur and users are used to that, so we match.
+      commit();
+    });
+  }
+
+  // F2 anywhere inside a history row also triggers rename (Explorer shortcut).
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'F2') return;
+    const row = document.activeElement && document.activeElement.closest
+                ? document.activeElement.closest('.hist-item')
+                : null;
+    if (!row) return;
+    // Grab the item by matching the rendered title back to the cache.
+    const idx = Array.from(row.parentNode.children).indexOf(row);
+    const items = _historyCache.filter(i => _matchesFilter(i,
+                      (document.getElementById('history-filter')||{}).value || ''));
+    const item = items[idx];
+    if (item) { e.preventDefault(); startRename(row, item); }
+  });
+
+  async function deleteSidecar(id, kind) {
+    // Deletes just the transcript OR thumbnail sidecar for this history
+    // entry. Main video stays, row stays, just the one button vanishes.
+    const r = await api('POST', '/api/history/delete_sidecar/' + encodeURIComponent(id) + '/' + kind);
+    if (!r.ok) { toast(r.error || ('Could not delete ' + kind), 'err'); return; }
+    toast(kind.charAt(0).toUpperCase() + kind.slice(1) + ' moved to Recycle Bin', 'ok');
+    loadHistory();
+  }
+
+  async function clearHistory() {
+    if (!confirm('Clear history AND send every downloaded file to the Recycle Bin?\n\nThe files will be recoverable from the Recycle Bin. Ctrl+Z also restores the history entries. Entries will also be kept in Previous Downloads as a log.')) return;
+    const r = await api('POST', '/api/history/clear');
+    if (!r.ok) { toast('Could not clear', 'err'); return; }
+    const n = r.count || 0;
+    toast(n > 0 ? (n + ' files moved to Recycle Bin · Ctrl+Z to undo') : 'History cleared', 'ok');
+    loadHistory();
+    loadActivity();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Previous Downloads (activity log)
+  // ---------------------------------------------------------------------------
+  let _activityCache = [];
+
+  async function loadActivity() {
+    const r = await api('GET', '/api/activity');
+    if (!r.ok) return;
+    _activityCache = r.activity || [];
+    renderActivity();
+  }
+
+  function renderActivity() {
+    const box = document.getElementById('activity');
+    if (!box) return;
+    const filter = (document.getElementById('activity-filter') || {}).value || '';
+    const items = _activityCache.filter(i => _matchesFilter(i, filter));
+    const countEl = document.getElementById('activity-count');
+    if (countEl) {
+      countEl.textContent = filter
+        ? `${items.length}/${_activityCache.length}`
+        : (_activityCache.length > 0 ? String(_activityCache.length) : '');
+    }
+    box.innerHTML = '';
+    if (items.length === 0) {
+      if (filter) {
+        box.innerHTML = '<div class="hist-empty">No matches for that filter.</div>';
+      } else {
+        box.innerHTML = '<div class="hist-empty">Nothing here yet. Deleted downloads show up in this log.</div>';
+      }
+      return;
+    }
+    items.forEach(item => {
+      const div = document.createElement('div');
+      div.className = 'hist-item';
+      let meta;
+      if (item.format_group === 'audio') {
+        meta = (item.format_ext || 'audio').toUpperCase() + (item.audio_bitrate ? ` · ${item.audio_bitrate}kbps` : '');
+      } else {
+        meta = (item.format_ext || 'video').toUpperCase() + (item.resolution && item.resolution !== '—' ? ` · ${item.resolution}p` : '');
+      }
+      const when = 'downloaded ' + fmtRelative(item.completed_at);
+      const gone = item.deleted_at ? ' · deleted ' + fmtRelative(item.deleted_at) : '';
+      div.innerHTML = `
+        <div class="hist-info">
+          <div class="hist-title">${escapeHtml(displayTitle(item))}</div>
+          <div class="hist-sub">${escapeHtml(meta)} · ${escapeHtml(when)}${escapeHtml(gone)}</div>
+        </div>
+        <div class="hist-actions">
+          <button class="act-redl" title="Download again">↻</button>
+          <button class="act-del danger" title="Remove from list (files are already gone)">✕</button>
+        </div>`;
+      div.querySelector('.act-redl').onclick = () => redownload(item);
+      div.querySelector('.act-del').onclick = () => deleteActivityItem(item.id);
+      box.appendChild(div);
+    });
+  }
+
+  async function deleteActivityItem(id) {
+    const r = await api('POST', '/api/activity/delete/' + encodeURIComponent(id));
+    if (!r.ok) { toast(r.error || 'Could not remove', 'err'); return; }
+    toast('Removed from Previous Downloads', 'ok');
+    loadActivity();
+  }
+
+  async function clearActivity() {
+    if (!confirm('Clear the entire Previous Downloads log? Files were already deleted -- this just clears the log itself.')) return;
+    const r = await api('POST', '/api/activity/clear');
+    if (!r.ok) { toast('Could not clear', 'err'); return; }
+    toast('Previous Downloads cleared', 'ok');
+    loadActivity();
+  }
+
+  async function undoLastDelete() {
+    const r = await api('POST', '/api/history/undo');
+    if (!r.ok) {
+      if (r.error === 'nothing to undo') return;
+      toast(r.error || 'Could not undo', 'err');
+      return;
+    }
+    const n = r.restored || 1;
+    toast('Restored ' + n + ' entry' + (n === 1 ? '' : ' entries') + ' · files are in Recycle Bin', 'ok');
+    loadHistory();
+    loadActivity();
+  }
+
+  async function redownload(item) {
+    // Pre-fill URL + original options from history, then STOP. User
+    // reviews (maybe flips Save transcript / Save thumbnail checkboxes,
+    // maybe switches from MP4 to MP3) and hits Download themselves.
+    // Auto-starting was too aggressive -- no chance to tweak the pick.
+    document.getElementById('url-input').value = item.source_url || '';
+    await loadInfo();
+    // Re-apply the item's original format if still valid
+    const fmt = document.getElementById('opt-format');
+    if (item.format_ext) {
+      const opt = Array.from(fmt.options).find(o => o.value === item.format_ext);
+      if (opt) { fmt.value = item.format_ext; onFormatChange(); }
+    }
+    if (item.resolution && item.resolution !== '—') {
+      const q = document.getElementById('opt-quality');
+      const opt = Array.from(q.options).find(o => o.value === String(item.resolution) && !o.disabled);
+      if (opt) q.value = item.resolution;
+    }
+    if (item.audio_bitrate) {
+      document.getElementById('opt-bitrate').value = item.audio_bitrate;
+    }
+    toast('Loaded — adjust options then click Download', 'ok');
+    // Focus the Download button so Enter/Space/click goes straight to it
+    document.getElementById('dl-btn').focus();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transcript
+  // ---------------------------------------------------------------------------
+  async function showTranscript(title) {
+    const url = document.getElementById('url-input').value.trim();
+    return showTranscriptForUrl(url, title);
+  }
+
+  async function showTranscriptForUrl(url, title) {
+    if (!url) { toast('No URL to fetch from', 'err'); return; }
+    const r = await api('POST', '/api/transcript', { url });
+    if (!r.ok) { toast(r.error || 'No transcript', 'err'); return; }
+    openModal(title || 'Transcript', r.text);
+  }
+
+  async function showTranscriptFromHistory(item) {
+    // Prefer the .txt file we already saved alongside the download --
+    // instant, no YouTube round-trip, can't fail with "no transcript
+    // available" the way a fresh fetch can when the video's captions
+    // were removed after download.
+    if (item.transcript_path) {
+      const r = await api('POST', '/api/read_transcript', { path: item.transcript_path });
+      if (r.ok) { openModal(item.title || 'Transcript', r.text); return; }
+      // Fall through to YouTube re-fetch if the file is missing
+    }
+    if (item.source_url) {
+      return showTranscriptForUrl(item.source_url, item.title);
+    }
+    toast('Transcript not available', 'err');
+  }
+
+  function formatTranscriptForReading(raw) {
+    // YouTube transcripts arrive as one caption per line. In a wide
+    // textarea that wraps at caption length (~5-10 words) it looks
+    // cramped. Reflow by:
+    //   1. Collapsing single newlines into spaces (captions form
+    //      continuous sentences across line boundaries)
+    //   2. Inserting a paragraph break after sentence-ending punctuation
+    //      when the next word starts with a capital letter -- matches
+    //      natural sentence boundaries without breaking mid-thought.
+    // The saved .txt on disk keeps the raw one-per-line format
+    // (industry standard for captions); this is display-only.
+    var joined = String(raw || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\n+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Insert paragraph break every 3-4 sentences so the wall-of-text
+    // has scannable structure. Match ". ", "! ", "? " followed by an
+    // uppercase letter, and do it for every 3rd occurrence.
+    var count = 0;
+    return joined.replace(/([.!?])\s+(?=[A-Z"'\[])/g, function(_, p) {
+      count++;
+      return p + (count % 3 === 0 ? '\n\n' : ' ');
+    });
+  }
+
+  function openModal(title, text) {
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-text').value = formatTranscriptForReading(text);
+    document.getElementById('modal-back').classList.add('active');
+  }
+  function closeModal() {
+    document.getElementById('modal-back').classList.remove('active');
+  }
+  function copyTranscript() {
+    const ta = document.getElementById('modal-text');
+    ta.select();
+    document.execCommand('copy');
+    toast('Copied to clipboard', 'ok');
+  }
+  function downloadTranscript() {
+    const text = document.getElementById('modal-text').value;
+    const title = document.getElementById('modal-title').textContent || 'transcript';
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = title.replace(/[\\/:*?"<>|]/g, '_') + '.txt';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Keyboard shortcuts + init
+  // ---------------------------------------------------------------------------
+  document.addEventListener('keydown', (e) => {
+    // Close modal on Escape
+    if (e.key === 'Escape') {
+      closeModal();
+      return;
+    }
+    // Ctrl+Z anywhere -> undo the most recent history delete / clear.
+    // Skip if user is typing in a text field -- let native undo run there.
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+      const active = document.activeElement;
+      const tag = active ? active.tagName : '';
+      const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA');
+      if (isTextField) return;  // native undo in the input field wins
+      e.preventDefault();
+      undoLastDelete();
+      return;
+    }
+    // Ctrl+V anywhere -> paste & load (unless user is typing in the URL field,
+    // which handles paste natively and also fires 'input' below for auto-load)
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+      const active = document.activeElement;
+      if (active && active.id === 'url-input') return;  // let native paste run
+      e.preventDefault();
+      pasteFromClipboard();
+      return;
+    }
+    // Ctrl+Enter anywhere -> download
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (currentInfo) startDownload();
+      else loadInfo();
+    }
+  });
+
+  const urlInput = document.getElementById('url-input');
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); loadInfo(); }
+  });
+  // Auto-load when the user pastes a URL into the field (paste event fires
+  // before 'input' is fully propagated; defer one tick)
+  urlInput.addEventListener('paste', () => {
+    setTimeout(() => { if (isLikelyUrl(urlInput.value)) loadInfo(); }, 50);
+  });
+
+  document.getElementById('modal-back').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-back') closeModal();
+  });
+
+  // Periodically refresh history + activity timestamps so "3 min ago" stays live
+  setInterval(() => { loadHistory(); loadActivity(); }, 30000);
+
+  // ---------------------------------------------------------------------------
+  // Heartbeat + shutdown -- keep the server alive while this tab is open,
+  // tell it to exit when the tab closes. Mirrors the "close the window,
+  // close the app" UX of a native desktop app like Luna.
+  // ---------------------------------------------------------------------------
+  function sendHeartbeat() {
+    fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
+  }
+  sendHeartbeat();                         // immediate ping on load
+  setInterval(sendHeartbeat, 20000);       // every 20s after that
+
+  window.addEventListener('beforeunload', () => {
+    // sendBeacon survives the tab close (regular fetch often gets killed).
+    // Server checks it's safe to shut down before actually exiting.
+    try { navigator.sendBeacon('/api/shutdown', ''); }
+    catch (e) {
+      // Last-ditch: fire a regular fetch; may or may not complete.
+      try { fetch('/api/shutdown', { method: 'POST', keepalive: true }); } catch (e) {}
+    }
+  });
+
+  // Also ping heartbeat when the tab becomes visible again (covers the
+  // case where the user switched away for a while and the server's about
+  // to time out)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sendHeartbeat();
+  });
+
+  // Init
+  wireSettingsControls();   // binds panel -> SETTINGS -> applyUISettings
+  onFormatChange();         // shows/hides bitrate based on current format
+  loadHistory();
+  loadActivity();
+
+  // Esc closes the settings panel (matches modal behavior).
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const panel = document.getElementById('settings-panel');
+      if (panel && panel.classList.contains('active')) closeSettings();
+    }
+  });
+</script>
+</body>
+</html>
