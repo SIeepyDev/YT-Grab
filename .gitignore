@@ -21,6 +21,7 @@ bin/
 
 # User-generated state
 downloads/
+previous_downloads/
 history.json
 activity.json
 settings.json

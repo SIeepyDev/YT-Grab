@@ -24,9 +24,19 @@
     --text-4:    #5c5c66;
     --accent:    #8a5cf6;
     --accent-rgb: 138, 92, 246;
-    --accent-hover: #7845e8;
-    --accent-subtle: rgba(138, 92, 246, 0.12);
-    --accent-text: #c4aaff;
+    /* v1.2: accent variants derived in OKLCH (perceptually uniform
+       lightness) via color-mix. JS only has to set --accent and
+       --accent-rgb; the browser computes hover/subtle/text so every
+       hue gets the same perceived step size. Supported everywhere
+       that matters (Chromium 111+, which WebView2 runs). */
+    --accent-hover:   color-mix(in oklch, var(--accent), black 12%);
+    --accent-subtle:  color-mix(in oklch, var(--accent) 15%, transparent);
+    --accent-text:    color-mix(in oklch, var(--accent) 70%, white);
+    /* --accent-contrast: text color that reads on top of the accent
+       fill (buttons, badges). JS sets this to #fff or #0a0a0f based
+       on the accent's perceived luminance -- so lime/amber accents
+       get dark text, purple/red get white. Default white. */
+    --accent-contrast: #ffffff;
     --danger:    #ef4444;
     --ok:        #22c55e;
     --warn:      #f59e0b;
@@ -35,6 +45,29 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
+
+  /* Smooth theme switch: when setThemeMode() runs, it temporarily
+     adds .theme-transitioning to <html> so colors cross-fade instead
+     of hard-cutting. The class comes off after ~400ms so transitions
+     don't fire on unrelated color changes (hover states etc.).
+     Cubic-bezier(0.4, 0, 0.2, 1) = Material "standard" easing. */
+  html.theme-transitioning,
+  html.theme-transitioning body,
+  html.theme-transitioning * {
+    transition:
+      background-color 0.38s cubic-bezier(0.4, 0, 0.2, 1),
+      color            0.38s cubic-bezier(0.4, 0, 0.2, 1),
+      border-color     0.38s cubic-bezier(0.4, 0, 0.2, 1),
+      fill             0.38s cubic-bezier(0.4, 0, 0.2, 1),
+      stroke           0.38s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html.theme-transitioning,
+    html.theme-transitioning body,
+    html.theme-transitioning * {
+      transition: none !important;
+    }
+  }
 
   /* =================================================================
      Custom frameless title bar. The native Windows chrome is hidden
@@ -100,35 +133,732 @@
     height: 100vh;
     overflow: hidden;
     display: flex; flex-direction: column; align-items: center;
-    padding: 52px 20px 24px 72px;
+    /* top = 32 (title bar) + 16 (gutter); left = 52 (sidebar) + 20;
+       right = 44 (themebar) + 20; bottom snug. */
+    padding: 48px 64px 20px 72px;
+    /* Establish a stacking context so the canvas FX pseudos
+       (body::before for noise, body::after for gradient) can sit at
+       z-index: -1 — above body's own bg but below every child, so
+       they tint only the empty canvas between cards, not the card
+       surfaces themselves. */
+    position: relative;
+    z-index: 0;
   }
 
   /* =================================================================
-     Left edge rail -- always visible, hosts the gear button.
-     Settings panel slides out over it when the gear is clicked. The
-     rail is 52px wide, spans full viewport height, and feels like a
-     built-in sidebar rather than a floating button.
+     Unified sidebar. Collapsed = 52px (icons only). Click anywhere
+     on it to expand to 300px, which reveals labels next to the icons
+     plus Customize + Settings sections stacked below. Click outside
+     (or on the brand row again) to collapse.
+     The sidebar OVERLAYS the main content when expanded -- body
+     padding-left stays at 72px so the 3-column grid doesn't reflow
+     every time the user peeks into the sidebar.
      ================================================================= */
-  .side-rail {
+  .sidebar {
     position: fixed; top: 32px; left: 0; bottom: 0;  /* below title bar */
     width: 52px;
     background: var(--bg-1);
     border-right: 1px solid var(--border);
-    z-index: 90;  /* below settings backdrop (150) + panel (160) */
+    z-index: 160;  /* above main content when expanded */
+    display: flex; flex-direction: column;
+    padding: 6px 0;
+    overflow: hidden;
+    box-shadow: none;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.25s ease;
+  }
+  .sidebar[data-expanded="true"] {
+    width: 300px;
+    box-shadow: 8px 0 24px rgba(0,0,0,0.4);
+  }
+
+  /* Sidebar rows: brand + nav + section labels/controls all lay on
+     this grid. Icon in a 28px lead slot, label flows after. */
+  .sb-row {
+    display: flex; align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 9px 12px;
+    background: transparent; border: none;
+    color: var(--text-3);
+    font-family: var(--font); font-size: 13px;
+    cursor: pointer; text-align: left;
+    transition: background 0.12s, color 0.12s;
+  }
+  .sb-row:hover { background: var(--bg-2); color: var(--text); }
+  .sb-row.active { color: var(--accent); background: var(--bg-2); }
+  .sb-icon {
+    width: 28px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .sb-icon svg {
+    width: 18px; height: 18px; stroke: currentColor;
+    fill: none; stroke-width: 2;
+  }
+  .sb-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.7);
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  .sb-label {
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity 0.15s, transform 0.2s;
+  }
+  .sidebar[data-expanded="true"] .sb-label {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  .sb-brand .sb-label {
+    color: var(--text); font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .sb-sep {
+    height: 1px; background: var(--border);
+    margin: 6px 12px;
+  }
+
+  /* Expandable body: holds Customize + Settings sections. Only
+     visible when the sidebar is expanded. Scrolls internally if the
+     content ever exceeds the viewport height. */
+  .sb-body {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    overflow-y: auto; overflow-x: hidden;
+    padding: 0 14px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s 0.08s;
+    scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+  }
+  .sidebar[data-expanded="true"] .sb-body {
+    opacity: 1; pointer-events: auto;
+  }
+  .sb-body::-webkit-scrollbar { width: 6px; }
+  .sb-body::-webkit-scrollbar-track { background: transparent; }
+  .sb-body::-webkit-scrollbar-thumb {
+    background: var(--bg-3); border-radius: 3px;
+  }
+  .sb-body-spacer { flex: 1; min-height: 20px; }
+
+  .sb-section { padding: 14px 4px; }
+  .sb-section h3 {
+    font-size: 10px; font-weight: 600;
+    color: var(--text-3); text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0 0 12px;
+  }
+  .sb-section > label {
+    display: block; font-size: 10px; color: var(--text-3);
+    margin: 12px 0 5px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .sb-section > label:first-of-type { margin-top: 0; }
+  .sb-section select {
+    width: 100%; padding: 8px 10px;
+    background: var(--bg-2); border: 1px solid var(--border-2);
+    color: var(--text); border-radius: 6px;
+    font-family: var(--font); font-size: 12px;
+    outline: none; cursor: pointer;
+  }
+  .sb-section select:focus { border-color: var(--accent); }
+  .sb-section .checkbox-set {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer; font-size: 12px; color: var(--text-2);
+    margin: 12px 0 0;
+  }
+  .sb-section .checkbox-set input { margin: 0; cursor: pointer; }
+
+  /* iOS-style toggle: label + switch on one row. Pinned at the very
+     bottom of the sidebar body to pair with the "Hide shortcut hints"
+     setting. Clicking anywhere on the row toggles the switch via the
+     label's for= attribute. */
+  .sb-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 14px 6px;
+    margin: 8px 0 4px;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 12px; color: var(--text-2);
+    user-select: none;
+  }
+  .sb-toggle-row:hover { color: var(--text); }
+  .sb-toggle-text { flex: 1; min-width: 0; }
+  .sb-toggle {
+    position: relative;
+    width: 38px; height: 22px;
+    flex-shrink: 0;
+  }
+  .sb-toggle input {
+    position: absolute; inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    margin: 0;
+  }
+  .sb-toggle-track {
+    position: absolute; inset: 0;
+    background: var(--bg-3);
+    border: 1px solid var(--border-2);
+    border-radius: 12px;
+    transition: background 0.2s, border-color 0.2s;
+    pointer-events: none;
+  }
+  .sb-toggle-track::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.2s;
+  }
+  .sb-toggle input:checked ~ .sb-toggle-track {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .sb-toggle input:checked ~ .sb-toggle-track::after {
+    transform: translateX(16px);
+    background: #ffffff;
+  }
+  .sb-toggle input:focus-visible ~ .sb-toggle-track {
+    box-shadow: 0 0 0 3px var(--accent-subtle);
+  }
+
+  /* =================================================================
+     Right-side Themes panel -- mirror of the left sidebar but docks
+     against the right edge. 44px collapsed (just the palette icon),
+     expands to 300px to show the theme controls.
+     ================================================================= */
+  .themebar {
+    position: fixed; top: 32px; right: 0; bottom: 0;
+    width: 44px;
+    background: var(--bg-1);
+    border-left: 1px solid var(--border);
+    z-index: 160;
     display: flex; flex-direction: column;
     align-items: center;
-    padding: 14px 0;
+    padding: 10px 0;
+    overflow: hidden;
+    box-shadow: none;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 0.25s ease;
+  }
+  .themebar[data-expanded="true"] {
+    width: 300px;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+    align-items: stretch;
+  }
+  /* Themebar header row (mirrors the left sidebar's .sb-brand). Icon
+     on the left, label fades in when expanded. Click = toggle. When
+     collapsed, the label is hidden via opacity+transform and the
+     whole row centers its icon. */
+  .theme-brand {
+    display: flex; align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 10px 12px;
+    background: transparent; border: none;
+    color: var(--text-3);
+    font-family: var(--font); font-size: 13px;
+    cursor: pointer; text-align: left;
+    transition: background 0.12s, color 0.12s;
+    flex-shrink: 0;
+    margin-bottom: 4px;
+  }
+  .themebar:not([data-expanded="true"]) .theme-brand {
+    /* Collapsed: 8px side padding + 28px icon = 44px rail width, so
+       the icon visually centers without needing justify-content:center
+       (which was pushing the icon off-screen to the left because the
+       invisible label still occupied layout space). */
+    padding: 10px 8px;
+    gap: 0;
+  }
+  .theme-brand:hover { background: var(--bg-2); color: var(--text); }
+  .theme-brand.active { color: var(--accent); background: var(--bg-2); }
+  .theme-icon {
+    width: 28px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .theme-icon svg {
+    width: 18px; height: 18px; stroke: currentColor;
+    fill: none; stroke-width: 2;
+  }
+  .theme-label {
+    white-space: nowrap;
+    opacity: 0;
+    max-width: 0;
+    overflow: hidden;
+    transition: opacity 0.15s, max-width 0.22s;
+    font-weight: 600;
+    color: var(--text-2);
+    letter-spacing: 0.3px;
+  }
+  .themebar[data-expanded="true"] .theme-label {
+    opacity: 1;
+    max-width: 200px;
+  }
+  .themebar-body {
+    display: flex; flex-direction: column;
+    flex: 1; min-height: 0;
+    padding: 6px 14px 14px;
+    overflow-y: auto;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s 0.08s;
+    scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+  }
+  .themebar[data-expanded="true"] .themebar-body {
+    opacity: 1; pointer-events: auto;
+  }
+  .themebar-body::-webkit-scrollbar { width: 6px; }
+  .themebar-body::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+  /* (themebar-head removed -- the brand row now doubles as header) */
+  .theme-section {
+    padding: 14px 0 18px;
+    border-top: 1px solid var(--border);
+  }
+  .theme-section:first-child { border-top: none; padding-top: 4px; }
+  .theme-section h3 {
+    font-size: 10px; font-weight: 600;
+    color: var(--text-3); text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0 0 10px;
+  }
+  .theme-soon {
+    padding: 12px 14px;
+    background: var(--bg-2);
+    border: 1px dashed var(--border-2);
+    border-radius: 8px;
+    color: var(--text-4);
+    font-size: 11px; font-style: italic;
+    text-align: center;
+  }
+  /* Mode picker: two cards side by side, Dark + Light. Click to switch.
+     Active card gets an accent ring + tinted background. */
+  .mode-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .mode-card {
+    padding: 14px 10px;
+    background: var(--bg-2);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    color: var(--text-3);
+    font-size: 12px; font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .mode-card:hover { color: var(--text); background: var(--bg-3); }
+  .mode-card.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+  }
+  .mode-card svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+  /* =================================================================
+     Themebar controls — shared vocabulary used by Layout, Background,
+     and Gradient sections. One compact set of primitives (preset
+     card, chip, slider, swatch) so every section feels like the same
+     family without each one inventing its own look.
+     ================================================================= */
+
+  /* Preset card grid — two or three per row, each one a mini swatch
+     with a title. Used by Layout and Gradient presets. */
+  .theme-presets {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
   }
-  /* Visual grouping: primary nav buttons up top, gear always at bottom */
-  .rail-spacer { flex: 1; min-height: 4px; }
-  .rail-sep {
-    width: 28px; height: 1px; background: var(--border);
-    margin: 4px 0;
+  .theme-presets.three { grid-template-columns: 1fr 1fr 1fr; }
+  .preset-card {
+    position: relative;
+    padding: 8px;
+    background: var(--bg-2);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s, background 0.15s;
+    display: flex; flex-direction: column; gap: 6px;
+    text-align: center;
   }
-  /* Pulse the target card's border briefly when the rail's jump
-     button is clicked. Draws the eye to the column that just got
-     scrolled/filtered. */
+  .preset-card:hover { background: var(--bg-3); transform: translateY(-1px); }
+  .preset-card.active {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+  }
+  .preset-card .preset-preview {
+    height: 38px; border-radius: 6px;
+    overflow: hidden; position: relative;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+  }
+  .preset-card .preset-label {
+    font-size: 10px; font-weight: 600;
+    color: var(--text-2);
+    letter-spacing: 0.3px;
+  }
+  .preset-card.active .preset-label { color: var(--accent); }
+
+  /* Mini layout diagram inside a preset-preview — three vertical bars
+     showing the column arrangement. Thickness/visibility driven by
+     per-preset classes so one shape serves all Layout presets. */
+  .lp-mini {
+    display: flex; gap: 3px;
+    height: 100%; width: 100%;
+    padding: 4px;
+  }
+  .lp-mini span {
+    background: var(--text-4);
+    border-radius: 2px;
+    flex: 1;
+    opacity: 0.55;
+  }
+  .lp-mini.focus span:nth-child(2) { flex: 2; opacity: 0.9; background: var(--accent); }
+  .lp-mini.stacked { flex-direction: column; }
+  .lp-mini.stacked span { width: 100%; height: 6px; }
+
+  /* Chip row — small toggle pills. Used by the Layout column-
+     visibility toggles and anywhere else a set of on/off options fits
+     on one line. */
+  .theme-chip-row {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-top: 10px;
+  }
+  .theme-chip {
+    padding: 5px 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-2);
+    border-radius: 999px;
+    color: var(--text-3);
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .theme-chip:hover { color: var(--text); border-color: var(--text-4); }
+  .theme-chip.on {
+    background: var(--accent-subtle);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Labeled slider row — tiny label on the left, accent-styled
+     range on the right, numeric readout on the far right. */
+  .theme-slider-row {
+    display: grid;
+    grid-template-columns: 60px 1fr 32px;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .theme-slider-row label {
+    font-size: 10px; font-weight: 600;
+    color: var(--text-3); letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .theme-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px;
+    background: var(--bg-3);
+    border-radius: 2px; outline: none;
+    cursor: pointer;
+  }
+  .theme-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px;
+    background: var(--accent);
+    border: 2px solid var(--bg-1);
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  }
+  .theme-slider::-moz-range-thumb {
+    width: 14px; height: 14px;
+    background: var(--accent);
+    border: 2px solid var(--bg-1);
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  }
+  .theme-slider-val {
+    font-family: var(--mono);
+    font-size: 10px; color: var(--text-3);
+    text-align: right;
+  }
+
+  /* Toggle switch — one-line pill for boolean settings (noise, drift). */
+  .theme-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px;
+    font-size: 11px; color: var(--text-2);
+  }
+  .theme-toggle {
+    position: relative;
+    width: 32px; height: 18px;
+    background: var(--bg-3);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .theme-toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    background: var(--text-3);
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .theme-toggle.on { background: var(--accent-subtle); }
+  .theme-toggle.on::after {
+    transform: translateX(14px);
+    background: var(--accent);
+  }
+
+  /* Background swatch grid — color circles for canvas presets. */
+  .bg-swatches {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+  }
+  .bg-swatch {
+    position: relative;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid var(--border);
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .bg-swatch:hover { transform: scale(1.12); }
+  .bg-swatch.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-subtle);
+  }
+  .bg-swatch.active::after {
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 2px var(--bg-1);
+  }
+
+  /* =================================================================
+     Canvas effects — the actual visual changes driven by themebar
+     selections. Everything keys off data-* attributes on <html> so
+     toggling is one attribute write and CSS does the rest.
+     ================================================================= */
+
+  /* Background presets — each one redefines --bg so every surface
+     token stays internally consistent. The "default" value is just
+     the absence of the attribute. */
+  html[data-bg="void"]     { --bg: #050509; }
+  html[data-bg="graphite"] { --bg: #17171d; }
+  html[data-bg="midnight"] { --bg: #0a0f1e; }
+  html[data-bg="slate"]    { --bg: #141820; }
+  html[data-bg="cream"]    { --bg: #f5efe4; }
+  html[data-bg="paper"]    { --bg: #ecebe6; }
+  html[data-bg="snow"]     { --bg: #f8f9fb; }
+
+  /* Film-grain noise overlay. Small inline SVG fractal-noise pattern;
+     ~0.05 opacity so it's felt more than seen. Fixed to the viewport
+     so it drifts with the page canvas, not with scroll. */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    z-index: -1;  /* sits between body bg and page content */
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+  html[data-noise="on"] body::before { opacity: 0.07; }
+  html[data-theme="light"][data-noise="on"] body::before { opacity: 0.05; }
+
+  /* Gradient overlay — a full-viewport layered radial backdrop that
+     sits behind all content. Each preset redefines --grad-a/b/c for
+     its three color stops; intensity controls overlay opacity.
+     Default --grad-intensity is 0 so "off" = invisible. */
+  :root {
+    --grad-a: transparent;
+    --grad-b: transparent;
+    --grad-c: transparent;
+    --grad-intensity: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    z-index: -1;  /* sits between body bg and page content */
+    pointer-events: none;
+    opacity: var(--grad-intensity);
+    transition: opacity 0.3s;
+    background:
+      radial-gradient(ellipse 60% 50% at 15% 20%, var(--grad-a), transparent 60%),
+      radial-gradient(ellipse 55% 55% at 85% 15%, var(--grad-b), transparent 60%),
+      radial-gradient(ellipse 70% 60% at 50% 95%, var(--grad-c), transparent 65%);
+  }
+  /* Preset color triads. Picked for vibe, not saturation max. */
+  html[data-gradient="aurora"] {
+    --grad-a: #5cf6c4; --grad-b: #8a5cf6; --grad-c: #f65cc4;
+  }
+  html[data-gradient="sunset"] {
+    --grad-a: #f6a85c; --grad-b: #f65c7d; --grad-c: #8a5cf6;
+  }
+  html[data-gradient="ocean"] {
+    --grad-a: #5cb8f6; --grad-b: #5c7df6; --grad-c: #26e0d8;
+  }
+  html[data-gradient="plum"] {
+    --grad-a: #a05cf6; --grad-b: #5c2a7a; --grad-c: #f65ca8;
+  }
+  html[data-gradient="ember"] {
+    --grad-a: #f66e5c; --grad-b: #f6b45c; --grad-c: #782a2a;
+  }
+  html[data-gradient="mono"] {
+    --grad-a: rgba(255,255,255,0.18); --grad-b: rgba(255,255,255,0.10);
+    --grad-c: rgba(255,255,255,0.15);
+  }
+  /* Accent-tied gradient — tracks the user's picked accent across
+     three offset hues so the glow always matches their color. */
+  html[data-gradient="accent"] {
+    --grad-a: rgba(var(--accent-rgb), 0.75);
+    --grad-b: rgba(var(--accent-rgb), 0.45);
+    --grad-c: rgba(var(--accent-rgb), 0.60);
+  }
+
+  /* Optional slow drift animation for the gradient. Off by default;
+     opt-in via data-grad-animate="on". Kept gentle — 28s cycle so it
+     never calls attention to itself. */
+  @keyframes grad-drift {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50%      { transform: translate(1.5%, -2%) scale(1.04); }
+  }
+  html[data-grad-animate="on"] body::after {
+    animation: grad-drift 28s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html[data-grad-animate="on"] body::after { animation: none; }
+  }
+
+  /* Layout presets — tweak the 3-column grid. Default (no attr) keeps
+     the existing .95 / 1.25 / .95 ratio. */
+  html[data-layout="focus"] .page-grid {
+    grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.8fr) minmax(0, 0.75fr);
+  }
+  html[data-layout="stacked"] .page-grid {
+    grid-template-columns: 1fr;
+  }
+  /* Column visibility toggles — data-cols is a space-separated list
+     of which columns to SHOW. Absence of a token hides that column.
+     Tokens: h (history), m (middle), a (active). */
+  html[data-cols]:not([data-cols~="h"]) .page-grid > .col:nth-child(1) { display: none; }
+  html[data-cols]:not([data-cols~="m"]) .page-grid > .col:nth-child(2) { display: none; }
+  html[data-cols]:not([data-cols~="a"]) .page-grid > .col:nth-child(3) { display: none; }
+
+  /* Light theme — carefully tuned to avoid the "flashbang" feel of a
+     naive invert. Principles:
+       - No pure #FFF anywhere; warmed-up off-whites reduce glare
+       - Page bg is meaningfully darker than cards so elevation reads
+       - Borders are noticeable (slightly darker) since we lose the
+         dark-bg contrast cues
+       - Text tones keep the same perceptual distance as dark mode */
+  html[data-theme="light"] {
+    --bg:        #dddee3;     /* page bg — cool soft gray */
+    --bg-1:      #f3f4f7;     /* cards — off-white, not #FFF */
+    --bg-2:      #e9eaef;     /* hover / nested surfaces */
+    --bg-3:      #dadbe1;     /* progress track, recessed bits */
+    --border:    #c7c9d0;
+    --border-2:  #a7a9b2;
+    --text:      #16181e;
+    --text-2:    #3a3c44;
+    --text-3:    #65676f;
+    --text-4:    #8d8f98;
+  }
+  /* Light-mode-specific component overrides. The base rules use heavy
+     drop shadows + white-on-dark accents that read wrong on a light
+     bg. Toning them down here keeps the effect gentle. */
+  html[data-theme="light"] .card {
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.06),
+      0 0 0 1px rgba(0, 0, 0, 0.02);
+  }
+  html[data-theme="light"] .sidebar,
+  html[data-theme="light"] .themebar {
+    box-shadow: none;
+  }
+  html[data-theme="light"] .sidebar[data-expanded="true"] {
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.08);
+  }
+  html[data-theme="light"] .themebar[data-expanded="true"] {
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
+  }
+  html[data-theme="light"] .title-bar {
+    border-bottom: 1px solid var(--border);
+  }
+  /* Color-picker handle's white fill + black border inverts oddly
+     against a light ring. Swap to darker border + lighter halo. */
+  html[data-theme="light"] .cp-ring-handle {
+    border: 2px solid rgba(0, 0, 0, 0.25);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.08),
+      0 2px 6px rgba(0, 0, 0, 0.15);
+  }
+  /* Light-mode Liquid Glass: dark rim in place of the white one
+     (white would disappear against a light sidebar bg); softer
+     highlights so nothing flashes out. */
+  html[data-theme="light"] .cp-sv {
+    box-shadow:
+      inset 0 0 0 1px rgba(0, 0, 0, 0.2),
+      inset 0 2px 0 rgba(255, 255, 255, 0.55),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.1),
+      0 6px 18px rgba(0, 0, 0, 0.1),
+      0 1px 2px rgba(0, 0, 0, 0.12),
+      0 0 24px rgba(var(--accent-rgb), 0.15);
+    /* Light-mode Liquid Glass: a softer, whiter frosted disc — the
+       dark-mode dark-glass treatment would sit too heavy on the
+       light sidebar, so lift the base toward translucent white. */
+    background:
+      linear-gradient(to top, rgba(0,0,0,0.05), transparent 65%),
+      radial-gradient(
+        ellipse 115% 90% at 34% 30%,
+        hsla(var(--cp-hue, 270), 72%, 60%, 0.16),
+        transparent 72%
+      ),
+      linear-gradient(135deg,
+        rgba(255,255,255,0.58) 0%,
+        rgba(255,255,255,0.30) 50%,
+        rgba(255,255,255,0.48) 100%);
+  }
+  html[data-theme="light"] .cp-sv::before {
+    background: radial-gradient(
+      ellipse 120% 60% at 50% -25%,
+      rgba(255, 255, 255, 0.22) 0%,
+      rgba(255, 255, 255, 0.06) 35%,
+      rgba(255, 255, 255, 0) 65%
+    );
+  }
+  html[data-theme="light"] .cp-sv::after {
+    background: radial-gradient(
+      ellipse 120% 45% at 50% 112%,
+      rgba(0, 0, 0, 0.05) 0%,
+      rgba(0, 0, 0, 0.02) 45%,
+      rgba(0, 0, 0, 0) 72%
+    );
+  }
+  html[data-theme="light"] .cp-sv-cursor {
+    border-color: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  }
+  /* Scrollbar thumbs look awkwardly bright in light mode with
+     dark-mode defaults. Tone them down. */
+  html[data-theme="light"] .scroll-list::-webkit-scrollbar-thumb,
+  html[data-theme="light"] .sb-body::-webkit-scrollbar-thumb,
+  html[data-theme="light"] .themebar-body::-webkit-scrollbar-thumb {
+    background: var(--border-2);
+  }
+
+  /* Pulse a card's border when a jump button is clicked. */
   @keyframes card-pulse {
     0%   { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.5);
            border-color: var(--accent); }
@@ -138,39 +868,10 @@
            border-color: var(--border); }
   }
   .card.pulse { animation: card-pulse 1.1s ease-out; }
-  .rail-logo {
-    width: 28px; height: 28px; margin-bottom: 4px;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .rail-logo .dot {
-    width: 10px; height: 10px; border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.7);
-    transition: background 0.2s, box-shadow 0.2s;
-  }
-  .rail-btn {
-    width: 38px; height: 38px;
-    background: transparent; border: 1px solid transparent;
-    border-radius: 8px; color: var(--text-3);
-    cursor: pointer; font-size: 18px;
-    transition: all 0.15s;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .rail-btn:hover {
-    color: var(--text); background: var(--bg-2);
-    border-color: var(--border-2);
-  }
-  .rail-btn.active {
-    color: var(--accent); background: var(--bg-2);
-    border-color: var(--accent);
-  }
 
-  h1 {
-    font-size: 22px; font-weight: 600; margin: 0 0 6px;
-    display: flex; align-items: center; gap: 10px;
-  }
-  h1 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.6); }
-  .tagline { color: var(--text-3); font-size: 12px; margin: 0 0 28px; }
+  /* h1 + .tagline rules removed -- the product name lives in the
+     top-left of the custom title bar now; the body shouldn't repeat
+     it. See .tb-brand in the title-bar block above. */
 
   /* Density tokens. --card-pad drives outer card padding; the --item-*
      tokens drive the rows INSIDE scroll lists (history rows, active
@@ -341,6 +1042,14 @@
     cursor: pointer; transition: all 0.12s;
   }
   .card-head .ghost-btn:hover { background: var(--bg-3); color: var(--text); border-color: var(--border-2); }
+  /* Square icon-only variant for the folder-open button next to
+     Clear all. SVG size fixed so the button stays tight. */
+  .card-head .ghost-btn.icon-only {
+    padding: 4px 5px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .card-head .ghost-btn.icon-only svg { width: 13px; height: 13px; }
+  .card-head .ghost-btn.icon-only:hover { color: var(--accent); border-color: var(--accent); }
   .card-head-actions { display: flex; align-items: center; gap: 8px; }
   .count-badge {
     display: inline-block; margin-left: 6px; padding: 1px 7px;
@@ -393,7 +1102,7 @@
   #paste-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; }
 
   #load-btn, #dl-btn {
-    padding: 0 22px; background: var(--accent); color: white; border: none;
+    padding: 0 22px; background: var(--accent); color: var(--accent-contrast); border: none;
     border-radius: 10px; font-family: var(--font); font-size: 13px; font-weight: 600;
     cursor: pointer; transition: background 0.12s, transform 0.1s;
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -456,7 +1165,7 @@
   .checkbox input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
   .checkbox input[type="checkbox"]:checked::after {
     content: '✓'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    color: white; font-size: 12px; font-weight: 700; line-height: 1;
+    color: var(--accent-contrast); font-size: 12px; font-weight: 700; line-height: 1;
   }
 
   #dl-btn { width: 100%; padding: 12px; font-size: 14px; }
@@ -587,92 +1296,224 @@
      download defaults (format, quality, sidecars), and About.
      All values persist to localStorage via the SETTINGS JS object.
      ================================================================= */
-  .settings-back {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
-    z-index: 150; opacity: 0; pointer-events: none;
-    transition: opacity 0.2s;
+  /* =================================================================
+     Luna-style HSV color picker. Three coordinated inputs:
+       1. Outer hue ring (conic-gradient rainbow) with a draggable
+          handle -- picks Hue (0-360°).
+       2. Inner SV square -- picks Saturation + Value by clicking/
+          dragging within it. Background is a live linear-gradient
+          computed from the current hue.
+       3. Hex input field -- type any #RRGGBB to land on it exactly.
+     All three drive a single state; picking from any of them updates
+     the others in lockstep. Limitless color space, no presets required.
+     ================================================================= */
+  .cp-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px;
+    padding: 6px 0 4px;
   }
-  .settings-back.active { opacity: 1; pointer-events: auto; }
-  .settings-panel {
-    position: fixed; top: 32px; left: 0; bottom: 0;  /* below title bar */
-    width: 340px; max-width: 100vw;
-    background: var(--bg-1); border-right: 1px solid var(--border-2);
-    z-index: 160; transform: translateX(-105%);
-    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex; flex-direction: column;
-    box-shadow: 8px 0 24px rgba(0,0,0,0.4);
+  /* Stage = positioning wrapper for the ring + SV square. The SV
+     MUST be a sibling of the ring (not a child) because the ring's
+     mask clips its entire rendering tree including children --
+     nesting the SV inside the ring makes the middle go transparent. */
+  .cp-stage {
+    position: relative;
+    width: 170px; height: 170px;
   }
-  .settings-panel.active { transform: translateX(0); }
-  .settings-head {
-    padding: 16px 20px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between;
-    flex-shrink: 0;
+  .cp-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      hsl(0,100%,50%), hsl(60,100%,50%), hsl(120,100%,50%),
+      hsl(180,100%,50%), hsl(240,100%,50%), hsl(300,100%,50%),
+      hsl(360,100%,50%));
+    /* Cut out the center so it's a ring, not a full disk. Mask ONLY
+       affects this element (not siblings) now that SV lives outside. */
+    -webkit-mask: radial-gradient(circle, transparent 54%, #000 56%);
+            mask: radial-gradient(circle, transparent 54%, #000 56%);
+    cursor: crosshair;
+    user-select: none;
+    touch-action: none;  /* prevent scroll on touch drag */
   }
-  .settings-head h2 {
-    font-size: 13px; font-weight: 600; color: var(--text-2);
-    margin: 0; text-transform: uppercase; letter-spacing: 1px;
+  .cp-ring-handle {
+    position: absolute;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid rgba(0, 0, 0, 0.65);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.4),
+      0 2px 6px rgba(0, 0, 0, 0.55);
+    /* Positioned via inline left/top percentages in JS */
   }
-  .settings-close {
-    background: transparent; border: none; color: var(--text-3);
-    font-size: 22px; cursor: pointer; line-height: 1;
-    padding: 0 6px; border-radius: 4px;
-    transition: color 0.12s;
+  /* Inner dot shows the currently-picked accent color right on the
+     handle, so at a glance you see both WHERE on the hue ring you
+     are AND what color that resolves to. */
+  .cp-ring-handle::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--accent);
   }
-  .settings-close:hover { color: var(--text); }
-  .settings-body {
-    flex: 1; overflow-y: auto; padding: 20px 20px 40px;
-    scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+  .cp-sv {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 122px; height: 122px;
+    transform: translate(-50%, -50%);
+    /* Full circle filling the ring's inner hole (130px interior at
+       54% mask cutout leaves ~4px breathing room per side). */
+    border-radius: 50%;
+    cursor: crosshair;
+    user-select: none;
+    touch-action: none;
+    /* Apple Liquid Glass edge treatment:
+         • Bright 1px inner rim — the hero: an outline traced all
+           the way around the circle so you read "glass boundary"
+           at any angle.
+         • Slightly brighter stroke on the top (light catching),
+           slightly darker on the bottom (weight underneath).
+         • Soft drop shadow + tight contact shadow for elevation.
+         • Accent-colored ambient halo so the picked color bleeds
+           softly into the transparent ring area around it. */
+    box-shadow:
+      /* All-around bright rim — traces the full circle */
+      inset 0 0 0 1px rgba(255, 255, 255, 0.32),
+      /* Extra bright line on top catching light */
+      inset 0 2px 0 rgba(255, 255, 255, 0.55),
+      /* Subtle dark line on bottom for weight */
+      inset 0 -2px 0 rgba(0, 0, 0, 0.22),
+      /* Soft elevation shadow */
+      0 6px 18px rgba(0, 0, 0, 0.35),
+      /* Tight contact shadow */
+      0 1px 2px rgba(0, 0, 0, 0.3),
+      /* Ambient accent halo — current color bleeds into surrounding */
+      0 0 28px rgba(var(--accent-rgb), 0.14);
+    /* Liquid Glass fill — a translucent, frosted disc that sits
+       inside the hue ring. No opaque HSV grid anymore; instead we
+       layer a subtle frosted sheen, a gentle hue-tinted glow (the
+       --cp-hue CSS variable is pushed in live from JS so the tint
+       softly tracks the picked color), and a faint bottom shade for
+       weight. Presence without dominating the glass. */
+    background:
+      /* soft bottom shade gives the disc a little weight */
+      linear-gradient(to top, rgba(0,0,0,0.26), transparent 62%),
+      /* hue-tinted sheen pooling upper-left like Apple's Liquid Glass */
+      radial-gradient(
+        ellipse 115% 90% at 34% 30%,
+        hsla(var(--cp-hue, 270), 78%, 62%, 0.18),
+        transparent 72%
+      ),
+      /* frosted-glass base — translucent white layer for the crystal look */
+      linear-gradient(135deg,
+        rgba(255,255,255,0.09) 0%,
+        rgba(255,255,255,0.02) 50%,
+        rgba(255,255,255,0.06) 100%);
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
   }
-  .settings-body::-webkit-scrollbar { width: 8px; }
-  .settings-body::-webkit-scrollbar-track { background: transparent; }
-  .settings-body::-webkit-scrollbar-thumb {
-    background: var(--bg-3); border-radius: 4px; border: 2px solid var(--bg-1);
+  /* Top specular crescent — curved highlight pooling at the top of
+     the glass circle. Positioned slightly above the element so only
+     the arced underside of the ellipse is visible inside. */
+  .cp-sv::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(
+      ellipse 120% 60% at 50% -25%,
+      rgba(255, 255, 255, 0.32) 0%,
+      rgba(255, 255, 255, 0.10) 32%,
+      rgba(255, 255, 255, 0.02) 55%,
+      rgba(255, 255, 255, 0) 75%
+    );
+    pointer-events: none;
+  }
+  /* Lensed underside glow — soft reflection at the bottom of the
+     glass, as if light passed through and settled. */
+  .cp-sv::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(
+      ellipse 120% 45% at 50% 112%,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.02) 45%,
+      rgba(255, 255, 255, 0) 72%
+    );
+    pointer-events: none;
+  }
+  .cp-sv-cursor {
+    position: absolute;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.4);
+    /* Above the liquid-glass ::before/::after overlays on .cp-sv */
+    z-index: 2;
+  }
+  .cp-hex {
+    width: 100%; max-width: 150px;
+    padding: 7px 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-2);
+    color: var(--text);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px; font-weight: 500;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .cp-hex:focus { border-color: var(--accent); }
+  /* Tiny instruction line under the hex input. Each word-span gets
+     the accent color for a pop of visual anchor without crowding. */
+  .cp-hint {
+    font-size: 10px; color: var(--text-4);
+    text-align: center; line-height: 1.5;
+    letter-spacing: 0.2px;
+    margin-top: 2px;
+    max-width: 180px;
+  }
+  .cp-hint em {
+    color: var(--accent-text);
+    font-style: normal; font-weight: 600;
   }
 
-  .settings-section { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
-  .settings-section:last-of-type { border-bottom: none; }
-  .settings-section h3 {
-    font-size: 10px; font-weight: 600; color: var(--text-3);
-    text-transform: uppercase; letter-spacing: 1px;
-    margin: 0 0 14px;
-  }
-  .settings-section > label {
-    display: block; font-size: 10px; color: var(--text-3);
-    margin: 12px 0 5px; text-transform: uppercase; letter-spacing: 0.5px;
-  }
-  .settings-section > label:first-of-type { margin-top: 0; }
-  .settings-section select {
-    width: 100%; padding: 8px 10px;
-    background: var(--bg-2); border: 1px solid var(--border-2);
-    color: var(--text); border-radius: 6px; font-family: var(--font); font-size: 12px;
-    outline: none; transition: border-color 0.12s;
-  }
-  .settings-section select:focus { border-color: var(--accent); }
-  .settings-section .checkbox-set {
-    display: flex; align-items: center; gap: 8px;
-    cursor: pointer; font-size: 12px; color: var(--text-2);
-    text-transform: none; letter-spacing: 0;
-    margin: 12px 0 0;
-  }
-  .settings-section .checkbox-set input { margin: 0; cursor: pointer; }
-
+  /* Accent color grid -- still lives in the sidebar now under Customize. */
   .accent-swatches {
-    display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px;
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px;
+    padding: 4px 2px;
   }
+  /* Circular color dots. Each swatch is a perfect circle; the active
+     one gets a subtle ring offset from the color fill so the check
+     mark reads clearly on any background color. */
   .swatch {
     width: 100%; aspect-ratio: 1;
-    border-radius: 7px; cursor: pointer;
+    border-radius: 50%;
+    cursor: pointer;
     border: 2px solid transparent;
-    transition: transform 0.15s, border-color 0.15s;
+    transition: transform 0.15s, box-shadow 0.15s;
     position: relative;
   }
-  .swatch:hover { transform: scale(1.12); }
-  .swatch.active { border-color: var(--text); }
+  .swatch:hover { transform: scale(1.15); }
+  .swatch.active {
+    border-color: var(--bg-1);
+    box-shadow: 0 0 0 2px var(--text);
+  }
   .swatch.active::after {
     content: '✓'; position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    color: white; font-weight: 700; font-size: 14px;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    color: white; font-weight: 700; font-size: 12px;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.7);
   }
 
   .about-line { font-size: 12px; color: var(--text-3); margin: 4px 0; }
@@ -806,7 +1647,7 @@
   .pl-footer-info { font-size: 11px; color: var(--text-3); }
   .pl-footer button {
     padding: 8px 16px; background: var(--accent); border: none;
-    color: white; border-radius: 6px; font-family: var(--font);
+    color: var(--accent-contrast); border-radius: 6px; font-family: var(--font);
     font-size: 12px; font-weight: 500; cursor: pointer;
   }
   .pl-footer button:hover { background: var(--accent-hover); }
@@ -885,7 +1726,7 @@
     background: var(--bg-2); color: var(--text); font-family: var(--font);
     font-size: 12px; font-weight: 500; cursor: pointer;
   }
-  .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
   .modal-actions button:hover { background: var(--bg-3); }
   .modal-actions button.primary:hover { background: var(--accent-hover); }
 
@@ -934,111 +1775,322 @@
     </div>
   </div>
 
-  <!-- Permanent left edge rail. Always visible, hosts the utility
-       buttons. The full settings panel slides out OVER the rail when
-       opened, so the controls feel built-in rather than floating. -->
-  <aside class="side-rail" aria-label="Utility rail">
-    <div class="rail-logo" title="YT Grab"><span class="dot"></span></div>
-    <div class="rail-sep"></div>
+  <!-- Unified sidebar. Collapsed: 52px (icons only). Click anywhere on
+       it to expand to 300px, revealing labels next to icons + Customize
+       and Settings sections. Click outside (or on the brand row again)
+       to collapse. Matches VS Code's activity-bar-with-integrated-panel
+       pattern. -->
+  <aside class="sidebar" id="sidebar" data-expanded="false" aria-label="Sidebar">
 
-    <!-- Quick open: the downloads folder on disk (Explorer). Huge
-         daily-use shortcut; no need to hunt through the file manager. -->
-    <button class="rail-btn" onclick="openDownloadsFolder()"
-            title="Open downloads folder" aria-label="Open downloads folder">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2" stroke-linecap="round"
-           stroke-linejoin="round">
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-      </svg>
+    <!-- Brand row: gear icon that toggles the sidebar expand/collapse.
+         Gear is a clearer "click me to open settings" affordance than
+         a decorative dot. -->
+    <button class="sb-row sb-brand" aria-label="Toggle sidebar">
+      <span class="sb-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </span>
+      <span class="sb-label">YT Grab</span>
     </button>
 
-    <!-- Jump-to-section buttons. Click scrolls that card's list to top,
-         focuses its filter, and briefly pulses its border so the user's
-         eye catches the highlighted column. -->
-    <button class="rail-btn" onclick="jumpTo('history')"
-            title="Jump to History" aria-label="Jump to History">
-      <!-- Clock icon (history = files on disk over time) -->
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2" stroke-linecap="round"
-           stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/>
-        <polyline points="12 6 12 12 16 14"/>
-      </svg>
+    <div class="sb-sep"></div>
+
+    <!-- Focus actions (first group): each jumps to and highlights the
+         corresponding card in the main view. -->
+    <button class="sb-row" onclick="focusUrlInput()" title="Focus URL input">
+      <span class="sb-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+      </span>
+      <span class="sb-label">URL</span>
     </button>
-    <button class="rail-btn" onclick="jumpTo('activity')"
-            title="Jump to Previous Downloads" aria-label="Jump to Previous Downloads">
-      <!-- Archive/box icon (previous = archived log) -->
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2" stroke-linecap="round"
-           stroke-linejoin="round">
-        <polyline points="21 8 21 21 3 21 3 8"/>
-        <rect x="1" y="3" width="22" height="5"/>
-        <line x1="10" y1="12" x2="14" y2="12"/>
-      </svg>
+    <button class="sb-row" onclick="jumpTo('history')" title="Focus History">
+      <span class="sb-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </span>
+      <span class="sb-label">History</span>
+    </button>
+    <button class="sb-row" onclick="jumpTo('activity')" title="Focus Previous Downloads">
+      <span class="sb-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="21 8 21 21 3 21 3 8"/>
+          <rect x="1" y="3" width="22" height="5"/>
+          <line x1="10" y1="12" x2="14" y2="12"/>
+        </svg>
+      </span>
+      <span class="sb-label">Previous</span>
+    </button>
+    <button class="sb-row" onclick="openShortcuts()" title="Keyboard shortcuts (?)">
+      <span class="sb-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </span>
+      <span class="sb-label">Shortcuts</span>
     </button>
 
-    <!-- Keyboard shortcut cheatsheet toggle (same as pressing ?) -->
-    <button class="rail-btn" onclick="openShortcuts()"
-            title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="2" stroke-linecap="round"
-           stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-        <line x1="12" y1="17" x2="12.01" y2="17"/>
-      </svg>
+    <div class="sb-sep"></div>
+
+    <!-- Folder actions (second group): open the actual folders on
+         disk in Windows Explorer. Same functionality is also on the
+         corresponding card headers -- this is the "extra convenience
+         in case people feel like clicking it here" version. -->
+    <button class="sb-row" onclick="openDownloadsFolder()" title="Open downloads folder">
+      <span class="sb-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+      </span>
+      <span class="sb-label">Downloads folder</span>
+    </button>
+    <button class="sb-row" onclick="openPreviousFolder()" title="Open previous_downloads folder">
+      <span class="sb-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          <line x1="8" y1="14" x2="16" y2="14"/>
+        </svg>
+      </span>
+      <span class="sb-label">Previous folder</span>
     </button>
 
-    <!-- Spacer pushes gear to the bottom of the rail. -->
-    <div class="rail-spacer"></div>
+    <!-- Body: only visible when expanded. Structure top-to-bottom:
+           Customize (accent) at the top,
+           flex spacer pushes the rest down,
+           Density just above Settings (appearance-related),
+           Settings with about + reset,
+           Hide-hints toggle pinned at the very bottom. -->
+    <div class="sb-body">
+      <div class="sb-sep"></div>
 
-    <button class="rail-btn" id="settings-btn" onclick="openSettings()"
-            title="Settings" aria-label="Settings">⚙</button>
-  </aside>
-
-  <!-- Settings panel overlay -->
-  <div class="settings-back" id="settings-back" onclick="closeSettings()"></div>
-  <aside class="settings-panel" id="settings-panel" aria-label="Settings panel">
-    <div class="settings-head">
-      <h2>Settings</h2>
-      <button class="settings-close" onclick="closeSettings()" aria-label="Close">×</button>
-    </div>
-    <div class="settings-body">
-
-      <section class="settings-section">
-        <h3>Appearance</h3>
+      <section class="sb-section">
+        <h3>Customize</h3>
         <label>Accent color</label>
-        <div class="accent-swatches" id="accent-swatches"></div>
+        <!-- HSV picker: hue ring + saturation/brightness square + hex.
+             Single unified circle picker -- no presets, limitless. -->
+        <div class="cp-wrap">
+          <div class="cp-stage">
+            <!-- Ring is masked to a donut shape. SV lives OUTSIDE the
+                 ring (as a sibling) so the mask doesn't clip it. -->
+            <div class="cp-ring" id="cp-ring">
+              <div class="cp-ring-handle" id="cp-ring-handle"></div>
+            </div>
+            <div class="cp-sv" id="cp-sv">
+              <div class="cp-sv-cursor" id="cp-sv-cursor"></div>
+            </div>
+          </div>
+          <input type="text" class="cp-hex" id="cp-hex"
+                 spellcheck="false" maxlength="7" value="#8A5CF6"
+                 aria-label="Accent color hex">
+          <p class="cp-hint">
+            <em>Ring</em> picks hue · <em>inside</em> picks saturation &amp; brightness
+          </p>
+        </div>
       </section>
 
-      <section class="settings-section">
-        <h3>Interface</h3>
+      <!-- Flex spacer pushes the Density + Settings cluster down. -->
+      <div class="sb-body-spacer"></div>
+
+      <div class="sb-sep"></div>
+
+      <section class="sb-section">
         <label>Density</label>
         <select id="set-density">
           <option value="compact">Compact</option>
           <option value="comfortable" selected>Comfortable</option>
           <option value="spacious">Spacious</option>
         </select>
-        <label class="checkbox-set">
-          <input type="checkbox" id="set-hide-hint">
-          <span>Hide keyboard shortcut hints</span>
-        </label>
       </section>
 
-      <section class="settings-section">
-        <h3>About</h3>
-        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.0.0</div>
+      <div class="sb-sep"></div>
+
+      <section class="sb-section">
+        <h3>Settings</h3>
+        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.2</div>
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
+        <button class="settings-reset" onclick="resetSettings()" style="margin-top: 14px;">Reset all settings</button>
       </section>
 
-      <button class="settings-reset" onclick="resetSettings()">Reset all settings</button>
+      <!-- Hide-hints toggle: iOS-style switch pinned at the bottom
+           of the sidebar, below Settings (per UX pass). A single
+           toggle deserves its own flavor rather than a generic
+           checkbox since it's the lone on/off control. -->
+      <label class="sb-toggle-row" for="set-hide-hint">
+        <span class="sb-toggle-text">Hide keyboard shortcut hints</span>
+        <span class="sb-toggle">
+          <input type="checkbox" id="set-hide-hint">
+          <span class="sb-toggle-track"></span>
+        </span>
+      </label>
     </div>
   </aside>
 
-  <h1><span class="dot"></span> YT Grab</h1>
-  <p class="tagline">Local. Private. Premium.</p>
+  <!-- Right-side theme panel. Collapsed 44px shows just a palette
+       icon. Expanded 300px shows Mode / Layout / Background /
+       Gradient sections. Currently only Mode is functional;
+       others are scaffolded placeholders for the next pass. -->
+  <aside class="themebar" id="themebar" data-expanded="false" aria-label="Theme panel">
+    <!-- Brand row doubles as the expand/collapse toggle. Icon on
+         the left; "Themes" label fades in when expanded. -->
+    <button class="theme-brand" id="themebar-toggle" onclick="toggleThemebar()"
+            title="Themes" aria-label="Themes">
+      <span class="theme-icon">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="13.5" cy="6.5" r="1.5"/>
+          <circle cx="17.5" cy="10.5" r="1.5"/>
+          <circle cx="8.5" cy="7.5" r="1.5"/>
+          <circle cx="6.5" cy="12.5" r="1.5"/>
+          <path d="M12 2a10 10 0 0 0 0 20c.5 0 .9-.4.9-.9 0-.2-.1-.5-.3-.6-.2-.2-.3-.4-.3-.7 0-.5.4-.9.9-.9H14a7 7 0 0 0 0-14"/>
+        </svg>
+      </span>
+      <span class="theme-label">Themes</span>
+    </button>
+
+    <div class="themebar-body">
+      <section class="theme-section">
+        <h3>Mode</h3>
+        <div class="mode-grid">
+          <button class="mode-card" id="mode-dark" onclick="setThemeMode('dark')">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+            Dark
+          </button>
+          <button class="mode-card" id="mode-light" onclick="setThemeMode('light')">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/>
+              <line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            Light
+          </button>
+          <!-- System = follow OS prefers-color-scheme, live-updating. -->
+          <button class="mode-card" id="mode-system" onclick="setThemeMode('system')">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="14" rx="2"/>
+              <path d="M8 20h8"/>
+              <path d="M12 16v4"/>
+            </svg>
+            System
+          </button>
+        </div>
+      </section>
+
+      <!-- ======== LAYOUT ========
+           Preset cards for the 3-column arrangement, plus chip toggles
+           to hide any column the user doesn't want visible. -->
+      <section class="theme-section">
+        <h3>Layout</h3>
+        <div class="theme-presets three" id="layout-presets">
+          <button class="preset-card" data-layout="classic" onclick="setLayoutPreset('classic')">
+            <div class="preset-preview"><div class="lp-mini classic"><span></span><span></span><span></span></div></div>
+            <span class="preset-label">Classic</span>
+          </button>
+          <button class="preset-card" data-layout="focus" onclick="setLayoutPreset('focus')">
+            <div class="preset-preview"><div class="lp-mini focus"><span></span><span></span><span></span></div></div>
+            <span class="preset-label">Focus</span>
+          </button>
+          <button class="preset-card" data-layout="stacked" onclick="setLayoutPreset('stacked')">
+            <div class="preset-preview"><div class="lp-mini stacked"><span></span><span></span><span></span></div></div>
+            <span class="preset-label">Stacked</span>
+          </button>
+        </div>
+        <div class="theme-chip-row" id="layout-cols">
+          <span class="theme-chip" data-col="h" onclick="toggleColumn('h')">History</span>
+          <span class="theme-chip" data-col="m" onclick="toggleColumn('m')">URL · Previous</span>
+          <span class="theme-chip" data-col="a" onclick="toggleColumn('a')">Active</span>
+        </div>
+      </section>
+
+      <!-- ======== BACKGROUND ========
+           Canvas swatches, accent-tint slider, film-grain toggle. Each
+           swatch's preview color equals the actual --bg it applies. -->
+      <section class="theme-section">
+        <h3>Background</h3>
+        <div class="bg-swatches" id="bg-swatches">
+          <span class="bg-swatch" data-bg=""         style="background:#0b0b0f;" title="Default"  onclick="setBgPreset('')"></span>
+          <span class="bg-swatch" data-bg="void"     style="background:#050509;" title="Void"     onclick="setBgPreset('void')"></span>
+          <span class="bg-swatch" data-bg="graphite" style="background:#17171d;" title="Graphite" onclick="setBgPreset('graphite')"></span>
+          <span class="bg-swatch" data-bg="midnight" style="background:#0a0f1e;" title="Midnight" onclick="setBgPreset('midnight')"></span>
+          <span class="bg-swatch" data-bg="slate"    style="background:#141820;" title="Slate"    onclick="setBgPreset('slate')"></span>
+          <span class="bg-swatch" data-bg="cream"    style="background:#f5efe4;" title="Cream"    onclick="setBgPreset('cream')"></span>
+          <span class="bg-swatch" data-bg="snow"     style="background:#f8f9fb;" title="Snow"     onclick="setBgPreset('snow')"></span>
+        </div>
+        <div class="theme-toggle-row">
+          <span>Film grain</span>
+          <span class="theme-toggle" id="bg-noise-toggle" onclick="toggleBgNoise()" role="switch" aria-label="Film grain"></span>
+        </div>
+      </section>
+
+      <!-- ======== GRADIENT ========
+           Six preset mesh gradients + accent-tied auto option, an
+           intensity slider (opacity of the overlay), and a quiet drift
+           animation toggle. Off by default so it stays opt-in. -->
+      <section class="theme-section">
+        <h3>Gradient</h3>
+        <div class="theme-presets" id="gradient-presets">
+          <button class="preset-card" data-gradient="off" onclick="setGradientPreset('off')">
+            <div class="preset-preview" style="background:var(--bg-1);"></div>
+            <span class="preset-label">Off</span>
+          </button>
+          <button class="preset-card" data-gradient="aurora" onclick="setGradientPreset('aurora')">
+            <div class="preset-preview" style="background:radial-gradient(ellipse 60% 50% at 15% 20%,#5cf6c4,transparent 60%),radial-gradient(ellipse 55% 55% at 85% 15%,#8a5cf6,transparent 60%),radial-gradient(ellipse 70% 60% at 50% 95%,#f65cc4,transparent 65%),#14141b;"></div>
+            <span class="preset-label">Aurora</span>
+          </button>
+          <button class="preset-card" data-gradient="sunset" onclick="setGradientPreset('sunset')">
+            <div class="preset-preview" style="background:radial-gradient(ellipse 60% 50% at 15% 20%,#f6a85c,transparent 60%),radial-gradient(ellipse 55% 55% at 85% 15%,#f65c7d,transparent 60%),radial-gradient(ellipse 70% 60% at 50% 95%,#8a5cf6,transparent 65%),#14141b;"></div>
+            <span class="preset-label">Sunset</span>
+          </button>
+          <button class="preset-card" data-gradient="ocean" onclick="setGradientPreset('ocean')">
+            <div class="preset-preview" style="background:radial-gradient(ellipse 60% 50% at 15% 20%,#5cb8f6,transparent 60%),radial-gradient(ellipse 55% 55% at 85% 15%,#5c7df6,transparent 60%),radial-gradient(ellipse 70% 60% at 50% 95%,#26e0d8,transparent 65%),#14141b;"></div>
+            <span class="preset-label">Ocean</span>
+          </button>
+          <button class="preset-card" data-gradient="plum" onclick="setGradientPreset('plum')">
+            <div class="preset-preview" style="background:radial-gradient(ellipse 60% 50% at 15% 20%,#a05cf6,transparent 60%),radial-gradient(ellipse 55% 55% at 85% 15%,#5c2a7a,transparent 60%),radial-gradient(ellipse 70% 60% at 50% 95%,#f65ca8,transparent 65%),#14141b;"></div>
+            <span class="preset-label">Plum</span>
+          </button>
+          <button class="preset-card" data-gradient="ember" onclick="setGradientPreset('ember')">
+            <div class="preset-preview" style="background:radial-gradient(ellipse 60% 50% at 15% 20%,#f66e5c,transparent 60%),radial-gradient(ellipse 55% 55% at 85% 15%,#f6b45c,transparent 60%),radial-gradient(ellipse 70% 60% at 50% 95%,#782a2a,transparent 65%),#14141b;"></div>
+            <span class="preset-label">Ember</span>
+          </button>
+          <button class="preset-card" data-gradient="mono" onclick="setGradientPreset('mono')">
+            <div class="preset-preview" style="background:radial-gradient(ellipse 60% 50% at 15% 20%,rgba(255,255,255,0.22),transparent 60%),radial-gradient(ellipse 55% 55% at 85% 15%,rgba(255,255,255,0.12),transparent 60%),radial-gradient(ellipse 70% 60% at 50% 95%,rgba(255,255,255,0.18),transparent 65%),#14141b;"></div>
+            <span class="preset-label">Mono</span>
+          </button>
+          <button class="preset-card" data-gradient="accent" onclick="setGradientPreset('accent')">
+            <div class="preset-preview" style="background:radial-gradient(ellipse 60% 50% at 15% 20%,rgba(var(--accent-rgb),0.75),transparent 60%),radial-gradient(ellipse 55% 55% at 85% 15%,rgba(var(--accent-rgb),0.45),transparent 60%),radial-gradient(ellipse 70% 60% at 50% 95%,rgba(var(--accent-rgb),0.60),transparent 65%),#14141b;"></div>
+            <span class="preset-label">Accent</span>
+          </button>
+        </div>
+        <div class="theme-slider-row">
+          <label>Intensity</label>
+          <input type="range" class="theme-slider" id="grad-intensity"
+                 min="0" max="100" value="40" oninput="setGradientIntensity(this.value)">
+          <span class="theme-slider-val" id="grad-intensity-val">40</span>
+        </div>
+        <div class="theme-toggle-row">
+          <span>Animated drift</span>
+          <span class="theme-toggle" id="grad-animate-toggle" onclick="toggleGradientAnimate()" role="switch" aria-label="Animated drift"></span>
+        </div>
+      </section>
+    </div>
+  </aside>
 
   <!-- ========================================================
        3-column page layout.
@@ -1066,6 +2118,13 @@
           <h2>History <span class="count-badge" id="history-count"></span></h2>
           <div class="card-head-actions">
             <input type="text" class="filter-input" id="history-filter" placeholder="Filter..." oninput="renderHistory()">
+            <button class="ghost-btn icon-only" onclick="openDownloadsFolder()"
+                    title="Open downloads folder" aria-label="Open downloads folder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
             <button class="ghost-btn" onclick="clearHistory()">Clear all</button>
           </div>
         </div>
@@ -1168,6 +2227,13 @@
           <h2>Previous Downloads <span class="count-badge" id="activity-count"></span></h2>
           <div class="card-head-actions">
             <input type="text" class="filter-input" id="activity-filter" placeholder="Filter..." oninput="renderActivity()">
+            <button class="ghost-btn icon-only" onclick="openPreviousFolder()"
+                    title="Open previous_downloads folder" aria-label="Open previous downloads folder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
             <button class="ghost-btn" onclick="clearActivity()">Clear all</button>
           </div>
         </div>
@@ -1341,9 +2407,19 @@
   };
   const SETTINGS_KEY = 'yt_grab_settings_v1';
   const DEFAULT_SETTINGS = {
-    accent: 'purple',         // color theme
+    accent: 'purple',         // preset name OR 'custom' — mainly for swatch active-state
+    accentHex: '#8A5CF6',     // canonical source of truth, any color goes
     density: 'comfortable',   // compact | comfortable | spacious
     hideHint: false,          // hide the "Enter to load · Ctrl+V..." hint line
+    themeMode: 'dark',        // 'dark' | 'light' — right themebar Mode section
+    // ===== Themebar personalization =====
+    layoutPreset:  'classic', // classic | focus | stacked — column arrangement
+    colsVisible:   'h m a',   // space-separated tokens: h (history), m (middle), a (active)
+    bgPreset:      '',        // '' (default) | void | graphite | midnight | slate | cream | paper | snow
+    bgNoise:       false,     // subtle film-grain overlay
+    gradientPreset:    'off', // off | aurora | sunset | ocean | plum | ember | mono | accent
+    gradientIntensity: 40,    // 0-100 — overlay opacity %
+    gradientAnimate:   false, // slow drift animation
   };
 
   function loadSettings() {
@@ -1358,18 +2434,97 @@
   }
   let SETTINGS = loadSettings();
 
-  function applyAccent(name) {
-    const c = ACCENTS[name] || ACCENTS.purple;
-    const s = document.documentElement.style;
-    s.setProperty('--accent', c.hex);
-    s.setProperty('--accent-rgb', c.rgb);
-    s.setProperty('--accent-hover', c.hover);
-    s.setProperty('--accent-subtle', `rgba(${c.rgb}, 0.12)`);
-    s.setProperty('--accent-text', c.text);
-    // Also update the theme-color meta so the title bar (if WebView2
-    // supports it) picks up the new hue.
+  // ===== HSV ↔ RGB ↔ HEX conversion + accent derivation =====
+  // Any of the three inputs (ring, SV square, hex field) eventually
+  // funnels into applyAccentHex, which derives the full set of
+  // --accent-* CSS variables from a single hex starting point.
+
+  function _hsvToRgb(h, s, v) {
+    s /= 100; v /= 100;
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - c;
+    let r = 0, g = 0, b = 0;
+    if (h < 60)       { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else              { r = c; b = x; }
+    return [Math.round((r + m) * 255),
+            Math.round((g + m) * 255),
+            Math.round((b + m) * 255)];
+  }
+  function _rgbToHex(r, g, b) {
+    return '#' + [r, g, b].map(n =>
+      n.toString(16).padStart(2, '0').toUpperCase()
+    ).join('');
+  }
+  function _hexToRgb(hx) {
+    hx = String(hx || '').trim().replace(/^#/, '');
+    if (hx.length === 3) hx = hx.split('').map(c => c + c).join('');
+    if (!/^[0-9a-fA-F]{6}$/.test(hx)) return null;
+    const n = parseInt(hx, 16);
+    return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+  }
+  function _rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    if (d !== 0) {
+      if (max === r)      h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else                h = (r - g) / d + 4;
+      h = h * 60;
+      if (h < 0) h += 360;
+    }
+    const s = max === 0 ? 0 : (d / max) * 100;
+    const v = max * 100;
+    return [h, s, v];
+  }
+
+  // Apply an arbitrary hex as the accent, deriving all the other
+  // tokens (hover, subtle, text) from HSV math rather than a preset
+  // lookup table. This is the "limitless" path -- any color works.
+  // v1.2: Apply an arbitrary hex as the accent. Hover / subtle /
+  // text variants are now derived in CSS via color-mix(in oklch),
+  // so JS only has to set --accent, --accent-rgb, and a computed
+  // --accent-contrast (readable text color on top of the accent).
+  function applyAccentHex(hex) {
+    const rgb = _hexToRgb(hex);
+    if (!rgb) return false;
+    const [r, g, b] = rgb;
+    const rgbStr   = `${r}, ${g}, ${b}`;
+    const root = document.documentElement.style;
+    root.setProperty('--accent', hex);
+    root.setProperty('--accent-rgb', rgbStr);
+    root.setProperty('--accent-contrast', _contrastOn(r, g, b));
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', c.hex);
+    if (meta) meta.setAttribute('content', hex);
+    return true;
+  }
+
+  // Luminance-based auto-contrast. Converts sRGB to linear, applies
+  // Rec. 709 luma weights, returns white for dark accents and a deep
+  // near-black for light accents. Threshold 0.55 skews slightly dark
+  // so pastel/amber/lime accents flip to dark text reliably while
+  // mid-blues/greens still get white. */
+  function _contrastOn(r, g, b) {
+    const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const Y = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    return Y > 0.55 ? '#0a0a0f' : '#ffffff';
+  }
+
+  // Legacy-compatible wrapper: applyAccent('purple') still works,
+  // just routes through the hex path. Used by resetSettings + boot.
+  function applyAccent(nameOrHex) {
+    if (typeof nameOrHex === 'string' && nameOrHex[0] === '#') {
+      applyAccentHex(nameOrHex);
+      return;
+    }
+    const c = ACCENTS[nameOrHex] || ACCENTS.purple;
+    applyAccentHex(c.hex);
   }
 
   function applyUISettings() {
@@ -1379,39 +2534,265 @@
     document.documentElement.setAttribute('data-hide-hint', String(!!SETTINGS.hideHint));
   }
 
-  function renderSwatches() {
-    const box = document.getElementById('accent-swatches');
-    if (!box) return;
-    box.innerHTML = '';
-    Object.entries(ACCENTS).forEach(([name, c]) => {
-      const el = document.createElement('div');
-      el.className = 'swatch' + (SETTINGS.accent === name ? ' active' : '');
-      el.style.background = c.hex;
-      el.title = name[0].toUpperCase() + name.slice(1);
-      el.onclick = () => {
-        SETTINGS.accent = name;
-        saveSettings(SETTINGS);
-        applyAccent(name);
-        renderSwatches();
-      };
-      box.appendChild(el);
+  // Preset swatches removed -- the picker handles any color. This stub
+  // remains as a no-op so legacy callsites (reset, openSettings)
+  // don't error out. Safe to delete once no code references it.
+  function renderSwatches() {}
+
+  // -------------------------------------------------------------------
+  // Sidebar expand/collapse. One function handles both directions;
+  // helpers on top for callsites that specifically want one behavior
+  // (e.g. Ctrl+, always expands; Esc always collapses).
+  // -------------------------------------------------------------------
+  function sidebarExpanded() {
+    const sb = document.getElementById('sidebar');
+    return sb && sb.getAttribute('data-expanded') === 'true';
+  }
+  function sidebarSetExpanded(on) {
+    const sb = document.getElementById('sidebar');
+    if (!sb) return;
+    sb.setAttribute('data-expanded', on ? 'true' : 'false');
+    if (on) {
+      // Sync Customize controls every time the sidebar opens so stored
+      // values always reflect what the user is looking at.
+      const density = document.getElementById('set-density');
+      const hideHint = document.getElementById('set-hide-hint');
+      if (density) density.value = SETTINGS.density;
+      if (hideHint) hideHint.checked = !!SETTINGS.hideHint;
+      renderSwatches();
+    }
+  }
+  function toggleSidebar() { sidebarSetExpanded(!sidebarExpanded()); }
+
+  // -------------------------------------------------------------------
+  // Right-side Themes panel: same expand/collapse idea as the left
+  // sidebar, but docked against the right edge. Also drives the
+  // dark/light mode toggle via the data-theme attribute on <html>.
+  // -------------------------------------------------------------------
+  function themebarExpanded() {
+    const tb = document.getElementById('themebar');
+    return tb && tb.getAttribute('data-expanded') === 'true';
+  }
+  function themebarSetExpanded(on) {
+    const tb = document.getElementById('themebar');
+    if (!tb) return;
+    tb.setAttribute('data-expanded', on ? 'true' : 'false');
+    const btn = document.getElementById('themebar-toggle');
+    if (btn) btn.classList.toggle('active', !!on);
+    if (on) {
+      _syncThemeModeCards();
+      // Re-sync Layout / Background / Gradient UI every time the panel
+      // opens so stored values always match what the user sees.
+      if (typeof applyThemebar === 'function') applyThemebar();
+    }
+  }
+  function toggleThemebar() { themebarSetExpanded(!themebarExpanded()); }
+
+  // Briefly enable global color transitions so a theme-mode switch
+  // cross-fades instead of hard-cutting. Kept narrow-window (400ms)
+  // so unrelated CSS changes (hover, active states) don't pick up
+  // unwanted transitions while this is on.
+  let _themeTxTimer = null;
+  function _flashThemeTransition() {
+    const h = document.documentElement;
+    h.classList.add('theme-transitioning');
+    clearTimeout(_themeTxTimer);
+    _themeTxTimer = setTimeout(() => h.classList.remove('theme-transitioning'), 420);
+  }
+
+  function _syncThemeModeCards() {
+    const mode = SETTINGS.themeMode || 'dark';
+    const d = document.getElementById('mode-dark');
+    const l = document.getElementById('mode-light');
+    const s = document.getElementById('mode-system');
+    if (d) d.classList.toggle('active', mode === 'dark');
+    if (l) l.classList.toggle('active', mode === 'light');
+    if (s) s.classList.toggle('active', mode === 'system');
+  }
+
+  // Resolve a stored mode preference ('dark'|'light'|'system') down to
+  // an effective theme ('dark'|'light'). 'system' delegates to the OS
+  // via prefers-color-scheme.
+  function _resolveThemeMode(mode) {
+    if (mode === 'system') {
+      const mql = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+      return mql && mql.matches ? 'dark' : 'light';
+    }
+    return mode === 'light' ? 'light' : 'dark';
+  }
+
+  function applyThemeMode(mode) {
+    // Resolve 'system' to the actual OS preference. data-theme on
+    // <html>: absence keeps the root dark palette; 'light' activates
+    // the html[data-theme="light"] var overrides defined in CSS.
+    // Accent tokens come from the JS picker so they stay the same
+    // across modes.
+    const effective = _resolveThemeMode(mode);
+    if (effective === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+  }
+
+  // Live-update when the OS theme changes -- only meaningful while
+  // the user has 'system' selected. Bound once on boot.
+  (function _bindSystemThemeWatcher() {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => {
+      if ((SETTINGS.themeMode || 'dark') === 'system') {
+        applyThemeMode('system');
+      }
+    };
+    if (mql.addEventListener) mql.addEventListener('change', handler);
+    else if (mql.addListener) mql.addListener(handler);  // older Safari/Chromium fallback
+  })();
+
+  function setThemeMode(mode) {
+    SETTINGS.themeMode = mode;
+    saveSettings(SETTINGS);
+    // Cross-fade colors briefly on a deliberate switch (not on
+    // OS-driven re-applies, those flow through applyThemeMode only).
+    _flashThemeTransition();
+    applyThemeMode(mode);
+    _syncThemeModeCards();
+  }
+
+  // -------------------------------------------------------------------
+  // Themebar personalization (Layout / Background / Gradient).
+  // All three sections drive data-* attributes on <html>; CSS does the
+  // rest. One apply function per concern, one sync function that
+  // paints the themebar controls so they always reflect SETTINGS.
+  // -------------------------------------------------------------------
+
+  // Helper: pick active state on a set of preset-card buttons by
+  // matching a data attribute. Used by every section.
+  function _paintPresetGroup(containerId, attr, value) {
+    const root = document.getElementById(containerId);
+    if (!root) return;
+    root.querySelectorAll('.preset-card').forEach(el => {
+      el.classList.toggle('active', el.dataset[attr] === value);
     });
   }
 
-  function openSettings() {
-    document.getElementById('settings-panel').classList.add('active');
-    document.getElementById('settings-back').classList.add('active');
-    // Sync panel controls to current state
-    const density = document.getElementById('set-density');
-    const hideHint = document.getElementById('set-hide-hint');
-    if (density) density.value = SETTINGS.density;
-    if (hideHint) hideHint.checked = !!SETTINGS.hideHint;
-    renderSwatches();
+  // ----- Layout -----
+  function applyLayout() {
+    const p = SETTINGS.layoutPreset || 'classic';
+    if (p === 'classic') document.documentElement.removeAttribute('data-layout');
+    else                 document.documentElement.setAttribute('data-layout', p);
+    // Column visibility — normalize to tokens the CSS expects.
+    const tokens = (SETTINGS.colsVisible || 'h m a').split(/\s+/).filter(Boolean).join(' ');
+    document.documentElement.setAttribute('data-cols', tokens || '-');
   }
-  function closeSettings() {
-    document.getElementById('settings-panel').classList.remove('active');
-    document.getElementById('settings-back').classList.remove('active');
+  function _syncLayoutUI() {
+    _paintPresetGroup('layout-presets', 'layout', SETTINGS.layoutPreset || 'classic');
+    const vis = (SETTINGS.colsVisible || 'h m a').split(/\s+/);
+    document.querySelectorAll('#layout-cols .theme-chip').forEach(chip => {
+      chip.classList.toggle('on', vis.includes(chip.dataset.col));
+    });
   }
+  function setLayoutPreset(name) {
+    SETTINGS.layoutPreset = name;
+    saveSettings(SETTINGS);
+    applyLayout();
+    _syncLayoutUI();
+  }
+  function toggleColumn(token) {
+    const set = new Set((SETTINGS.colsVisible || 'h m a').split(/\s+/).filter(Boolean));
+    if (set.has(token)) set.delete(token); else set.add(token);
+    // Don't let the user hide every column — keep at least one.
+    if (set.size === 0) set.add(token);
+    SETTINGS.colsVisible = [...set].join(' ');
+    saveSettings(SETTINGS);
+    applyLayout();
+    _syncLayoutUI();
+  }
+
+  // ----- Background -----
+  function applyBackground() {
+    const p = SETTINGS.bgPreset || '';
+    if (p) document.documentElement.setAttribute('data-bg', p);
+    else   document.documentElement.removeAttribute('data-bg');
+    document.documentElement.setAttribute('data-noise', SETTINGS.bgNoise ? 'on' : 'off');
+  }
+  function _syncBackgroundUI() {
+    const p = SETTINGS.bgPreset || '';
+    document.querySelectorAll('#bg-swatches .bg-swatch').forEach(s => {
+      s.classList.toggle('active', (s.dataset.bg || '') === p);
+    });
+    const t = document.getElementById('bg-noise-toggle');
+    if (t) t.classList.toggle('on', !!SETTINGS.bgNoise);
+  }
+  function setBgPreset(name) {
+    SETTINGS.bgPreset = name || '';
+    saveSettings(SETTINGS);
+    applyBackground();
+    _syncBackgroundUI();
+  }
+  function toggleBgNoise() {
+    SETTINGS.bgNoise = !SETTINGS.bgNoise;
+    saveSettings(SETTINGS);
+    applyBackground();
+    _syncBackgroundUI();
+  }
+
+  // ----- Gradient -----
+  function applyGradient() {
+    const p = SETTINGS.gradientPreset || 'off';
+    if (p === 'off') document.documentElement.removeAttribute('data-gradient');
+    else             document.documentElement.setAttribute('data-gradient', p);
+    // Intensity is a 0-100 value that maps directly to CSS opacity.
+    const pct = Math.max(0, Math.min(100, +SETTINGS.gradientIntensity || 0));
+    document.documentElement.style.setProperty('--grad-intensity', (pct / 100).toFixed(2));
+    document.documentElement.setAttribute('data-grad-animate',
+      SETTINGS.gradientAnimate ? 'on' : 'off');
+  }
+  function _syncGradientUI() {
+    _paintPresetGroup('gradient-presets', 'gradient', SETTINGS.gradientPreset || 'off');
+    const s = document.getElementById('grad-intensity');
+    const v = document.getElementById('grad-intensity-val');
+    if (s) s.value = SETTINGS.gradientIntensity;
+    if (v) v.textContent = SETTINGS.gradientIntensity;
+    const t = document.getElementById('grad-animate-toggle');
+    if (t) t.classList.toggle('on', !!SETTINGS.gradientAnimate);
+  }
+  function setGradientPreset(name) {
+    SETTINGS.gradientPreset = name;
+    saveSettings(SETTINGS);
+    applyGradient();
+    _syncGradientUI();
+  }
+  function setGradientIntensity(val) {
+    SETTINGS.gradientIntensity = +val;
+    saveSettings(SETTINGS);
+    applyGradient();
+    _syncGradientUI();
+  }
+  function toggleGradientAnimate() {
+    SETTINGS.gradientAnimate = !SETTINGS.gradientAnimate;
+    saveSettings(SETTINGS);
+    applyGradient();
+    _syncGradientUI();
+  }
+
+  // One-shot: apply everything + paint every control. Called on boot
+  // and whenever the themebar opens so stored values always match
+  // what the user sees.
+  function applyThemebar() {
+    applyLayout();
+    applyBackground();
+    applyGradient();
+    _syncLayoutUI();
+    _syncBackgroundUI();
+    _syncGradientUI();
+  }
+
+  // Alias for backwards-compatibility with existing call sites that
+  // say openSettings / closeSettings. The behavior now opens/closes
+  // the unified sidebar instead of a separate panel.
+  function openSettings()  { sidebarSetExpanded(true); }
+  function closeSettings() { sidebarSetExpanded(false); }
 
   function wireSettingsControls() {
     // UI knobs: density + hide-hint. Both mutate SETTINGS, save, and
@@ -1434,16 +2815,36 @@
     if (!confirm('Reset all settings to defaults?')) return;
     SETTINGS = { ...DEFAULT_SETTINGS };
     saveSettings(SETTINGS);
-    applyAccent(SETTINGS.accent);
+    applyAccentHex(SETTINGS.accentHex);
+    if (window._cp && window._cp.setHex) window._cp.setHex(SETTINGS.accentHex);
     applyUISettings();
-    openSettings();  // re-sync the panel controls
+    renderSwatches();
+    applyThemeMode(SETTINGS.themeMode || 'dark');
+    _syncThemeModeCards();
+    applyThemebar();
     toast('Settings reset', 'ok');
+  }
+
+  // Migration: older SETTINGS schemas stored only `accent: 'purple'`
+  // without `accentHex`. Back-fill the hex from the preset so the new
+  // picker has something valid to start from.
+  if (!SETTINGS.accentHex) {
+    const preset = ACCENTS[SETTINGS.accent] || ACCENTS.purple;
+    SETTINGS.accentHex = preset.hex;
+    saveSettings(SETTINGS);
   }
 
   // Apply accent + UI settings immediately so the page renders in the
   // chosen theme even before DOMContentLoaded (no flash of defaults).
-  applyAccent(SETTINGS.accent);
+  applyAccentHex(SETTINGS.accentHex);
   applyUISettings();
+  applyThemeMode(SETTINGS.themeMode || 'dark');
+  // Themebar personalization (layout/background/gradient) — apply the
+  // raw data-* attrs immediately so there's no flash-of-default-theme.
+  // UI sync runs after DOM is parsed; elements don't exist yet here.
+  applyLayout();
+  applyBackground();
+  applyGradient();
 
   // ---------------------------------------------------------------------------
   // Format mode (video vs audio) -- show the right extras
@@ -2444,9 +3845,225 @@
 
   // Init
   wireSettingsControls();   // binds panel -> SETTINGS -> applyUISettings
+  applyThemebar();          // paint layout/background/gradient control states
   onFormatChange();         // shows/hides bitrate based on current format
   loadHistory();
   loadActivity();
+
+  // -------------------------------------------------------------------
+  // HSV color picker instance (Luna-style: hue ring + SV square + hex).
+  // Exposed on window._cp so the swatch row + reset flow can call
+  // setHex() to sync the picker's UI to a new color.
+  // -------------------------------------------------------------------
+  window._cp = (function () {
+    const ring       = document.getElementById('cp-ring');
+    const ringHandle = document.getElementById('cp-ring-handle');
+    const sv         = document.getElementById('cp-sv');
+    const svCursor   = document.getElementById('cp-sv-cursor');
+    const hex        = document.getElementById('cp-hex');
+    if (!ring || !sv || !hex) return {};
+
+    // Ring drag uses center-of-ring for angle calc. The radius used to
+    // position the handle is a PERCENTAGE so it survives the picker
+    // living inside a hidden (collapsed) sidebar -- no getBoundingClientRect
+    // failures when the sidebar is 0-width or not yet measured.
+    //
+    // 44 places the handle dead-center on the visible ring band (the
+    // mask at 54%/56% of farthest-corner makes the visible band span
+    // roughly 67-85px of the 170px ring; center is ~76px; 44% of
+    // 170 ≈ 75px offset from ring center -> on the band).
+    const RING_HANDLE_PCT = 44;
+
+    const state = { h: 262, s: 63, v: 96 };  // sensible default
+
+    function paint(fire) {
+      const [r, g, b] = _hsvToRgb(state.h, state.s, state.v);
+      const hx = _rgbToHex(r, g, b);
+
+      // SV fill: no opaque HSV grid anymore — the disc is a Liquid
+      // Glass surface defined in CSS (.cp-sv). We just push the live
+      // hue in as a CSS custom property so the frosted glass picks
+      // up a soft tint that tracks the currently picked color. All
+      // the rim, crescent, and underside glow stay in the CSS layer.
+      sv.style.setProperty('--cp-hue', state.h);
+
+      // SV cursor position
+      svCursor.style.left = state.s + '%';
+      svCursor.style.top  = (100 - state.v) + '%';
+
+      // Ring handle position -- convert hue angle to x/y on the ring
+      // perimeter. conic-gradient starts at 0deg = 12 o'clock going
+      // clockwise, so we match that.
+      const angle = state.h * Math.PI / 180;
+      const hx_ = 50 + RING_HANDLE_PCT * Math.sin(angle);
+      const hy_ = 50 - RING_HANDLE_PCT * Math.cos(angle);
+      ringHandle.style.left = hx_ + '%';
+      ringHandle.style.top  = hy_ + '%';
+
+      // Reflect into hex field (skip when the user is actively typing
+      // so we don't clobber mid-type edits)
+      if (document.activeElement !== hex) hex.value = hx;
+
+      if (fire) {
+        applyAccentHex(hx);
+        SETTINGS.accent    = 'custom';
+        SETTINGS.accentHex = hx;
+        saveSettings(SETTINGS);
+      }
+    }
+
+    function angleFromEvent(e) {
+      const rect = ring.getBoundingClientRect();
+      const dx = e.clientX - (rect.left + rect.width / 2);
+      const dy = e.clientY - (rect.top  + rect.height / 2);
+      let a = Math.atan2(dx, -dy) * 180 / Math.PI;  // 0° = up, CW
+      if (a < 0) a += 360;
+      return a;
+    }
+    function svFromEvent(e) {
+      const rect = sv.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width,  e.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      return {
+        s: (x / rect.width)  * 100,
+        v: ((rect.height - y) / rect.height) * 100,
+      };
+    }
+
+    let dragMode = null;  // 'ring' | 'sv' | null
+    function onMove(e) {
+      if (!dragMode) return;
+      if (dragMode === 'ring') {
+        state.h = angleFromEvent(e);
+      } else {
+        const p = svFromEvent(e);
+        state.s = p.s; state.v = p.v;
+      }
+      paint(true);
+    }
+    function onUp() { dragMode = null; }
+
+    // Ring and SV are now DOM siblings (SV sits outside the ring so
+    // the ring's mask doesn't clip it). Each gets its own mousedown
+    // to initiate the right drag mode.
+    ring.addEventListener('mousedown', (e) => {
+      dragMode = 'ring'; onMove(e); e.preventDefault();
+    });
+    sv.addEventListener('mousedown', (e) => {
+      dragMode = 'sv'; onMove(e); e.preventDefault();
+    });
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+
+    // Hex input: accept partial typing, commit on full valid hex
+    hex.addEventListener('input', () => {
+      const rgb = _hexToRgb(hex.value);
+      if (!rgb) return;  // still typing partial value
+      const [h, s, v] = _rgbToHsv(...rgb);
+      state.h = h; state.s = s; state.v = v;
+      paint(true);
+    });
+    hex.addEventListener('blur', () => {
+      // If left in an invalid state, snap back to the real color
+      if (!_hexToRgb(hex.value)) paint(false);
+    });
+
+    function setHex(hx) {
+      const rgb = _hexToRgb(hx);
+      if (!rgb) return;
+      const [h, s, v] = _rgbToHsv(...rgb);
+      state.h = h; state.s = s; state.v = v;
+      paint(false);  // don't fire onChange -- caller drives SETTINGS
+    }
+
+    // Seed from current setting + first paint
+    setHex(SETTINGS.accentHex || '#8A5CF6');
+
+    return { setHex };
+  })();
+
+  // -------------------------------------------------------------------
+  // Sidebar interaction wiring. Per Sleepy's spec: clicking anywhere
+  // on the sidebar should expand it. Clicking the brand row while
+  // already expanded collapses it. Clicking outside the sidebar
+  // while expanded collapses it (so it doesn't block main content).
+  //
+  // Interactive elements inside the sidebar (nav buttons, swatches,
+  // selects) still get their clicks via normal bubbling -- we never
+  // preventDefault here.
+  // -------------------------------------------------------------------
+  (function wireSidebar() {
+    const sb = document.getElementById('sidebar');
+    if (!sb) return;
+
+    sb.addEventListener('click', (e) => {
+      // Clicks on interactive controls inside the body should NEVER
+      // accidentally close/open things; let them bubble naturally.
+      // But a click on the brand row explicitly toggles.
+      const brand = e.target.closest('.sb-brand');
+      if (brand) {
+        toggleSidebar();
+        return;
+      }
+      // Any other click anywhere on the sidebar expands it if it's
+      // not already open. (It stays open through regular button clicks
+      // like History/Previous/Shortcuts so the user can see they
+      // triggered something.)
+      if (!sidebarExpanded()) sidebarSetExpanded(true);
+    });
+
+    // Click outside the sidebar while expanded = collapse.
+    //
+    // Subtle bug fix: we use composedPath() instead of checking
+    // sb.contains(e.target). Why? Some sidebar click handlers
+    // (notably swatch clicks) re-render their container, which
+    // detaches the original target from the DOM before this handler
+    // runs. sb.contains() then returns false -- we'd incorrectly
+    // collapse the sidebar. composedPath captures the path AT
+    // DISPATCH TIME, before any mutations, so it reflects where the
+    // click truly originated.
+    document.addEventListener('click', (e) => {
+      if (!sidebarExpanded()) return;
+      const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
+      // Inside sidebar at dispatch time: keep it open.
+      if (path.includes(sb)) return;
+      // Title bar / modals / backdrops / right themebar: stay put.
+      const tb = document.getElementById('themebar');
+      if (tb && path.includes(tb)) return;
+      if (e.target && e.target.closest &&
+          e.target.closest('.title-bar, .modal-back, .pl-modal')) return;
+      sidebarSetExpanded(false);
+    });
+  })();
+
+  // Themebar interaction wiring -- mirrors the left sidebar's
+  // click-anywhere-to-expand behavior.
+  (function wireThemebar() {
+    const tb = document.getElementById('themebar');
+    if (!tb) return;
+
+    tb.addEventListener('click', (e) => {
+      // Palette button has its own onclick (toggleThemebar). When it
+      // fires, the event bubbles up to this handler -- we skip it
+      // here so we don't re-expand what the button just collapsed.
+      if (e.target.closest && e.target.closest('#themebar-toggle')) return;
+      // Any other click inside the collapsed themebar = expand.
+      if (!themebarExpanded()) themebarSetExpanded(true);
+    });
+
+    // Click-outside-to-collapse. composedPath() for the same reason
+    // the left sidebar uses it (DOM mutations during click handlers).
+    document.addEventListener('click', (e) => {
+      if (!themebarExpanded()) return;
+      const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
+      if (path.includes(tb)) return;
+      const sb = document.getElementById('sidebar');
+      if (sb && path.includes(sb)) return;
+      if (e.target && e.target.closest &&
+          e.target.closest('.title-bar, .modal-back, .pl-modal')) return;
+      themebarSetExpanded(false);
+    });
+  })();
 
   // Multi-URL paste: intercept paste on the URL input. If the pasted
   // text has 2+ YouTube URLs, queue them all as separate downloads
@@ -2503,10 +4120,27 @@
     if (!r.ok) toast(r.error || 'Could not open folder', 'err');
   }
 
+  // Opens the dedicated previous_downloads/ folder in Explorer --
+  // where soft-deleted items live until hard-deleted from Previous.
+  async function openPreviousFolder() {
+    const r = await api('POST', '/api/open_previous_folder', {});
+    if (!r.ok) toast(r.error || 'Could not open Previous folder', 'err');
+  }
+
+  // Sidebar button: focus the URL input so the user can start typing/
+  // pasting immediately (also scrolls the Video URL card into view).
+  function focusUrlInput() {
+    const inp = document.getElementById('url-input');
+    if (!inp) return;
+    inp.focus();
+    inp.select();
+  }
+
   // Rail button: jump to a card section. Scrolls that list to top,
-  // focuses its filter input, and pulses the card border so the user
-  // can see which column they just jumped to. section = 'history' or
-  // 'activity' (= Previous Downloads).
+  // focuses its filter input, pulses the card border, and for
+  // History -- which represents files on disk -- ALSO opens the
+  // downloads folder in Explorer. The folder and column are two
+  // views of the same data, so the one button offers both.
   function jumpTo(section) {
     const listId   = section === 'activity' ? 'activity'        : 'history';
     const filterId = section === 'activity' ? 'activity-filter' : 'history-filter';
@@ -2534,6 +4168,10 @@
       filter.focus();
       filter.select();
     }
+
+    // Sidebar jump is now focus/highlight ONLY -- dedicated folder
+    // open buttons live on the card headers themselves (next to Clear
+    // all). Keeps one click = one action, never surprises.
   }
 
   // -------------------------------------------------------------------
@@ -2632,15 +4270,14 @@
   // Global keydown: Esc closes things, "?" shows cheatsheet, Ctrl+,
   // opens settings (universal preferences shortcut).
   document.addEventListener('keydown', (e) => {
-    // Esc: close panel / modals in priority order
+    // Esc: close things in priority order -- modal > sidebar > themebar > context menu
     if (e.key === 'Escape') {
       const pl = document.getElementById('pl-back');
       if (pl && pl.classList.contains('active')) { closePlaylist(); return; }
       const sc = document.getElementById('sc-back');
       if (sc && sc.classList.contains('active')) { closeShortcuts(); return; }
-      const panel = document.getElementById('settings-panel');
-      if (panel && panel.classList.contains('active')) closeSettings();
-      // Also close any open context menu
+      if (sidebarExpanded()) { sidebarSetExpanded(false); return; }
+      if (themebarExpanded()) { themebarSetExpanded(false); return; }
       closeContextMenu();
       return;
     }

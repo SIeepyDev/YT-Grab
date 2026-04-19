@@ -50,6 +50,12 @@ else:
 
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(exist_ok=True)
+# Dedicated "soft-delete archive" for items the user removed from
+# History. Two-stage delete: History X moves folder here; Previous X
+# (or Clear Previous) sends from here to the Recycle Bin permanently.
+# Undo restores from here back to downloads/.
+PREVIOUS_DIR = BASE_DIR / "previous_downloads"
+PREVIOUS_DIR.mkdir(exist_ok=True)
 HISTORY_FILE = BASE_DIR / "history.json"
 ACTIVITY_FILE = BASE_DIR / "activity.json"
 PORT = 8765
@@ -94,24 +100,110 @@ def _trash_file(path):
 
 
 def _trash_all_sidecars(entry):
-    """Move an entry's media file + all sidecars to the Recycle Bin.
+    """Send an entry's folder to the Recycle Bin. This is the
+    PERMANENT delete -- used when the user removes an item from
+    Previous Downloads, or Clears all of Previous. For soft delete
+    from History, use _soft_delete_to_previous instead.
+
     Newer entries have a 'folder' field pointing at the per-video
-    subfolder -- for those we trash the whole folder as one unit
-    (single Recycle Bin entry, easier to restore later). Older
-    entries without the folder field fall back to trashing individual
-    files."""
+    subfolder -- for those we trash the whole folder as one unit.
+    Older entries fall back to trashing individual files."""
     folder = entry.get("folder")
     if folder:
         folder_path = Path(folder)
         if folder_path.exists():
-            # One send2trash call moves the whole directory tree.
             _trash_file(folder)
             return
-    # Fallback for legacy flat-layout entries
     for key in ("filename", "transcript_path", "thumbnail_path", "subtitle_path"):
         path = entry.get(key)
         if path:
             _trash_file(path)
+
+
+def _soft_delete_to_previous(entry):
+    """Soft delete: move the entry's per-video folder from downloads/
+    to previous_downloads/. The file stays recoverable without touching
+    the Recycle Bin. Entry dict is mutated in-place with updated paths
+    so that later operations (undo, permanent delete, open folder)
+    find the new location.
+
+    Returns True if we actually moved something, False on legacy/missing
+    entries where the caller should treat it as already-gone."""
+    folder = entry.get("folder")
+    if not folder:
+        # Legacy flat-layout entry with no folder -- fall back to
+        # Recycle Bin since there's no per-item folder to move.
+        for key in ("filename", "transcript_path", "thumbnail_path", "subtitle_path"):
+            p = entry.get(key)
+            if p: _trash_file(p)
+        return False
+
+    src = Path(folder)
+    if not src.exists():
+        # Already gone. Nothing to do.
+        return False
+
+    # Collision-safe destination: if a folder with this name already
+    # exists in previous_downloads/ (user deleted + re-downloaded +
+    # deleted again), suffix with a number so we don't clobber.
+    dst = PREVIOUS_DIR / src.name
+    counter = 2
+    while dst.exists():
+        dst = PREVIOUS_DIR / f"{src.name} ({counter})"
+        counter += 1
+
+    try:
+        src.rename(dst)
+    except Exception as e:
+        # Cross-drive or permission issue -- fall back to Recycle Bin
+        # so the "delete" contract still holds.
+        print(f"[yt-grab] soft-delete rename failed ({e}); using Recycle Bin",
+              file=sys.stderr)
+        _trash_file(folder)
+        return True
+
+    # Rewrite path fields to point at the new location so subsequent
+    # ops (hard delete, undo, open folder) find the moved folder.
+    new_folder = str(dst.resolve())
+    entry["folder"] = new_folder
+    entry["in_previous"] = True   # marker used by restore/hard-delete
+    for key in ("filename", "transcript_path", "thumbnail_path", "subtitle_path"):
+        p = entry.get(key)
+        if p:
+            entry[key] = p.replace(str(src), new_folder)
+    return True
+
+
+def _restore_from_previous(entry):
+    """Undo: move a soft-deleted folder from previous_downloads/ back
+    to downloads/. Called by the undo stack. Updates entry paths
+    back to the downloads/ location. Returns True on success."""
+    folder = entry.get("folder")
+    if not folder or not entry.get("in_previous"):
+        return False
+    src = Path(folder)
+    if not src.exists():
+        return False
+    dst = DOWNLOADS_DIR / src.name
+    # If the user re-downloaded the same video while this one sat in
+    # previous, there could be a name collision. Suffix to stay safe.
+    counter = 2
+    while dst.exists():
+        dst = DOWNLOADS_DIR / f"{src.name} ({counter})"
+        counter += 1
+    try:
+        src.rename(dst)
+    except Exception as e:
+        print(f"[yt-grab] restore rename failed: {e}", file=sys.stderr)
+        return False
+    new_folder = str(dst.resolve())
+    entry["folder"] = new_folder
+    entry["in_previous"] = False
+    for key in ("filename", "transcript_path", "thumbnail_path", "subtitle_path"):
+        p = entry.get(key)
+        if p:
+            entry[key] = p.replace(str(src), new_folder)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -967,12 +1059,11 @@ def api_download():
 
 @app.route("/api/history/delete/<job_id>", methods=["POST"])
 def api_history_delete(job_id):
-    """Remove a single entry from history AND send its file(s) to the
-    Recycle Bin. The entry gets pushed onto the undo stack so Ctrl+Z
-    can restore the history row (file stays in Recycle Bin -- user
-    restores it from there if they want it back). Entry also gets
-    logged to activity.json so it shows up in Previous Downloads even
-    after the undo window is gone."""
+    """Soft delete: remove from History AND move the folder from
+    downloads/ to previous_downloads/. Entry is logged to activity.json
+    (Previous Downloads card) and pushed onto the undo stack so Ctrl+Z
+    restores it. Files are NOT sent to the Recycle Bin at this stage --
+    that happens only if the user subsequently deletes from Previous."""
     hist = _load_history()
     victim = None
     new_hist = []
@@ -983,9 +1074,9 @@ def api_history_delete(job_id):
             new_hist.append(h)
     if not victim:
         return jsonify({"ok": False, "error": "not in history"}), 404
-    _trash_all_sidecars(victim)
+    _soft_delete_to_previous(victim)   # mutates victim paths in-place
     _save_history(new_hist)
-    _log_activity(victim)
+    _log_activity(victim)              # logs the UPDATED victim (new paths)
     with _undo_lock:
         _undo_stack.append([victim])
         while len(_undo_stack) > UNDO_STACK_MAX:
@@ -1163,12 +1254,13 @@ def api_history_rename(job_id):
 
 @app.route("/api/history/clear", methods=["POST"])
 def api_history_clear():
-    """Wipe the entire history list AND send every file to the Recycle
-    Bin. Pushes the whole batch onto the undo stack and mirrors every
-    entry into the activity log."""
+    """Clear the whole history list -- soft delete. Every folder is
+    moved from downloads/ to previous_downloads/ (not the Recycle Bin).
+    User can still permanently drop them by clearing Previous, or
+    restore via Ctrl+Z."""
     hist = _load_history()
     for entry in hist:
-        _trash_all_sidecars(entry)
+        _soft_delete_to_previous(entry)
     _save_history([])
     if hist:
         _log_activity(hist)
@@ -1188,42 +1280,63 @@ def api_activity():
 
 @app.route("/api/activity/delete/<job_id>", methods=["POST"])
 def api_activity_delete(job_id):
-    """Remove a single entry from the activity log. Does NOT touch any
-    files (they're already deleted if the entry is here). This is for
-    cleaning up the log itself -- like clearing one browser-history row."""
+    """Hard delete: if the entry's folder still lives in
+    previous_downloads/, send it to the Recycle Bin for good. Then
+    remove from the activity log. This is the final stage of the
+    two-step delete -- after this, recovery requires digging into
+    the Windows Recycle Bin."""
     activity = _load_activity()
-    new_activity = [a for a in activity if a.get("id") != job_id]
-    if len(new_activity) == len(activity):
+    victim = None
+    new_activity = []
+    for a in activity:
+        if a.get("id") == job_id and victim is None:
+            victim = a
+        else:
+            new_activity.append(a)
+    if not victim:
         return jsonify({"ok": False, "error": "not in activity"}), 404
+    # If the soft-delete folder still exists, trash it now.
+    _trash_all_sidecars(victim)
     _save_activity(new_activity)
     return jsonify({"ok": True})
 
 
 @app.route("/api/activity/clear", methods=["POST"])
 def api_activity_clear():
-    """Wipe the entire activity log."""
-    count = len(_load_activity())
+    """Hard-delete EVERY entry in Previous Downloads: any folders still
+    in previous_downloads/ go to the Recycle Bin, then the log itself
+    is wiped."""
+    activity = _load_activity()
+    for entry in activity:
+        _trash_all_sidecars(entry)
     _save_activity([])
-    return jsonify({"ok": True, "count": count})
+    return jsonify({"ok": True, "count": len(activity)})
 
 
 @app.route("/api/history/undo", methods=["POST"])
 def api_history_undo():
     """Pop the most recent delete-op and restore its history entries.
-    The files themselves stayed in the Windows Recycle Bin; user can
-    restore them from there via the standard Windows UI if needed."""
+    Now that delete is a soft move to previous_downloads/, undo also
+    moves the folder BACK into downloads/ and removes the mirrored
+    entry from activity.json -- a full round-trip."""
     with _undo_lock:
         if not _undo_stack:
             return jsonify({"ok": False, "error": "nothing to undo"}), 404
         batch = _undo_stack.pop()
     hist = _load_history()
-    # Re-insert the restored entries at the top (most-recent first order
-    # is how the UI shows them anyway). Use id to dedupe in case the
-    # user somehow re-downloaded in the meantime.
     existing_ids = {h.get("id") for h in hist}
+    # Move files back from previous_downloads/ to downloads/ and
+    # drop the mirrored entries out of activity.json.
+    activity = _load_activity()
+    restored_ids = set()
     for entry in batch:
+        _restore_from_previous(entry)    # mutates paths back to downloads/
         if entry.get("id") not in existing_ids:
             hist.append(entry)
+            restored_ids.add(entry.get("id"))
+    if restored_ids:
+        activity = [a for a in activity if a.get("id") not in restored_ids]
+        _save_activity(activity)
     _save_history(hist)
     return jsonify({"ok": True, "restored": len(batch)})
 
@@ -1481,6 +1594,43 @@ def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
             return True
         time.sleep(0.15)
     return False
+
+
+@app.route("/api/open_previous_folder", methods=["POST"])
+def api_open_previous_folder():
+    """Open the dedicated previous_downloads/ folder in Explorer.
+    Items soft-deleted from History live here until the user hard
+    deletes them from Previous (at which point they go to Recycle
+    Bin). Reuses existing Explorer window at that path if one's open,
+    same as /api/open_folder does for downloads/."""
+    target_path = PREVIOUS_DIR
+    try:
+        target_path.mkdir(exist_ok=True)   # make sure it's there
+        if sys.platform.startswith("win"):
+            import ctypes
+            if _focus_existing_explorer(target_path):
+                return jsonify({"ok": True, "reused": True})
+            try:
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)
+                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0)
+            except Exception:
+                pass
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "open", str(target_path), None, None, 1
+            )
+            threading.Thread(
+                target=_focus_newly_spawned_explorer,
+                args=(target_path,),
+                daemon=True,
+            ).start()
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(target_path)])
+        else:
+            subprocess.Popen(["xdg-open", str(target_path)])
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/open_folder", methods=["POST"])

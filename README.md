@@ -97,3 +97,49 @@ The Flask server runs in a background thread; the main thread is pywebview. A he
 ## Author
 
 Built by [SleepyDev](https://github.com/SIeepyDev). Part of the Luna workspace tools family.
+
+## Changelog
+
+### v1.2 — Theming Polish (2026-04)
+
+Themebar grew up. The right-side Themes panel is no longer a gear with a color picker — it's a proper personalization surface with four sections: Theme mode, Layout, Background, and Gradient.
+
+**Theme mode**
+- Three-card picker: **Light**, **Dark**, **System**. System listens to `prefers-color-scheme` and follows your OS live — flip Windows' theme and the app flips with it, no restart.
+- Switching modes now *transitions* instead of snapping. 380 ms cubic-bezier cross-fade on background, text, borders, and accent surfaces. Respects `prefers-reduced-motion`.
+
+**Layout section**
+- Three layout presets: **Balanced** (default three-column), **Focus** (middle column wider, sides slimmer for when you're paste-and-going), **Stacked** (single-column flow for narrow windows or screenshots).
+- Per-column visibility toggles for History / Middle / Queue. Hide what you don't use.
+
+**Background section**
+- Seven base backgrounds across both modes: Void, Graphite, Midnight, Slate for dark; Cream, Paper, Snow for light.
+- Optional subtle noise overlay — adds film-grain texture without affecting contrast.
+
+**Gradient section**
+- Six gradient presets: Aurora, Sunset, Ocean, Plum, Ember, plus **Accent-derived** (auto-generates a mesh from your current accent color).
+- Gradient intensity slider (0–100 %) and optional slow animation that orbits the hue field over ~40 s.
+
+**Under the hood**
+- Accent palette now derives from a single hex via `color-mix(in oklch, …)` — `--accent`, `--accent-hover`, `--accent-subtle`, `--accent-text`, and `--accent-contrast` stay perceptually consistent across the full color range. No more muddy-looking hovers on amber or lime.
+- Auto-contrast text: buttons and badges on accent backgrounds pick black or white automatically based on Rec. 709 luminance. Pastel accents flip to dark text, dark accents stay white-on-accent.
+- Every themebar control is a single `data-*` attribute on `<html>` — CSS does the work, JS just toggles an attribute. Fast and declarative.
+- New settings persisted across sessions: `layoutPreset`, `colsVisible`, `bgPreset`, `bgNoise`, `gradientPreset`, `gradientIntensity`, `gradientAnimate`.
+
+**Also in this release**
+- Color picker inner disc is now true Liquid Glass — transparent, fitted within the hue ring, frosted with `backdrop-filter: blur(18px) saturate(1.4)`. Feels like Apple's material, not a solid JS-painted gradient.
+
+### v1.1 — Batch, subtitles, context menu (2026-04)
+
+- **Playlist support** — paste a playlist URL, get a picker modal with thumbnails and checkboxes. Select all / none / individual, queues via the batch pipeline.
+- **Subtitles (.srt)** — new "Save subtitles" checkbox. Requests both human-authored and auto-generated English captions. New Subs combo-button on history rows.
+- **Right-click context menu on history rows** — Copy URL, Open on YouTube, Reveal in folder, Rename, Redownload, Delete.
+- **Clipboard auto-detect** — copy a YouTube URL anywhere, return to YT Grab, URL auto-fills with a "Enter to load" hint.
+- **Multi-URL batch paste** — paste newline-separated YouTube URLs, they all queue.
+- **Keyboard shortcuts** — press `?` for cheatsheet, `Ctrl+,` opens settings.
+- Page scroll locked, only cards scroll internally. 14-color accent palette (was 6). Dark Windows title bar via DWM immersive. Flicker-free launch.
+- New `/api/playlist_info` endpoint uses yt-dlp `flat_playlist` for ~1 s listing of 50 videos (vs ~30 s with per-video probe).
+
+### v1.0 — Initial prototype
+
+Three-column workspace, every format up to 4K, embedded metadata + thumbnail, transcript + thumbnail sidecars, rename-on-disk, Previous Downloads log, Ctrl+Z undo, native Windows integration.
