@@ -172,6 +172,23 @@
     display: flex; flex-direction: column;
     gap: 16px; min-width: 0;
     min-height: 0;
+    /* Subtle stagger fade-in on app open. Each column gets a slightly
+       later start so the 3 columns "unfold" into view instead of all
+       popping at once. Runs once on page load. `forwards` holds the
+       end state; `both` applies the `from` state during the delay so
+       nothing flashes unstyled. */
+    animation: yt-grab-enter 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .page-grid .col:nth-child(1) { animation-delay: 40ms; }
+  .page-grid .col:nth-child(2) { animation-delay: 110ms; }
+  .page-grid .col:nth-child(3) { animation-delay: 180ms; }
+  @keyframes yt-grab-enter {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  /* Respect the user's OS-level reduce-motion preference. */
+  @media (prefers-reduced-motion: reduce) {
+    .page-grid .col { animation: none; }
   }
   /* Cards inside the grid stretch to fill their column (the 720px cap
      was for single-column layout; irrelevant here) and lose their
@@ -630,6 +647,30 @@
   }
   .modal textarea::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
   .modal textarea::-webkit-scrollbar-thumb:active { background: var(--accent); }
+  /* Keyboard-shortcut cheatsheet modal. Narrower and shorter than the
+     transcript modal since the content is a tight key/value grid. */
+  .sc-modal { width: min(90vw, 480px); height: auto; }
+  .sc-grid {
+    display: grid; grid-template-columns: auto 1fr;
+    gap: 10px 16px; margin: 12px 0 16px;
+    font-size: 13px; color: var(--text-2);
+  }
+  .sc-grid kbd {
+    justify-self: end;
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    background: var(--bg-2); border: 1px solid var(--border-2);
+    color: var(--text); padding: 3px 8px; border-radius: 5px;
+    min-width: 36px; text-align: center;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.4), inset 0 -1px 0 rgba(0,0,0,0.25);
+  }
+  .sc-hint {
+    padding: 10px 12px; margin-bottom: 14px;
+    background: var(--accent-subtle); border: 1px solid transparent;
+    border-left: 3px solid var(--accent);
+    border-radius: 6px; color: var(--accent-text);
+    font-size: 12px;
+  }
+
   .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
   .modal-actions button {
     padding: 8px 14px; border-radius: 7px; border: 1px solid var(--border-2);
@@ -877,6 +918,29 @@
     </div>
   </div>
 
+  <!-- Keyboard shortcut cheatsheet. Opened with the "?" key.
+       Dismissed with Esc, click-outside, or Close button. -->
+  <div class="modal-back" id="sc-back" onclick="if (event.target === this) closeShortcuts()">
+    <div class="modal sc-modal">
+      <h3>Keyboard shortcuts</h3>
+      <div class="sc-grid">
+        <kbd>Enter</kbd><span>Load preview for URL in field</span>
+        <kbd>Ctrl + V</kbd><span>Paste URL &amp; auto-load</span>
+        <kbd>Ctrl + Enter</kbd><span>Start download</span>
+        <kbd>Ctrl + Z</kbd><span>Undo last delete</span>
+        <kbd>F2</kbd><span>Rename focused history row</span>
+        <kbd>Double-click</kbd><span>Rename (on a history row title)</span>
+        <kbd>Ctrl + ,</kbd><span>Open settings</span>
+        <kbd>?</kbd><span>Show this cheatsheet</span>
+        <kbd>Esc</kbd><span>Close panel / modal</span>
+      </div>
+      <div class="sc-hint">Tip: paste 2+ YouTube URLs separated by newlines to batch-download them.</div>
+      <div class="modal-actions">
+        <button class="primary" onclick="closeShortcuts()">Got it</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast"></div>
 
 <script>
@@ -1098,6 +1162,88 @@
       }
     } catch (e) {
       toast('Clipboard access blocked by browser', 'err');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Clipboard auto-detect: when the window regains focus (user alt-tabs
+  // back from their browser), check if the clipboard has a YouTube URL
+  // that isn't already in our input. If so, autofill and gently suggest
+  // loading. Major daily-use win -- removes 2 clicks from the common
+  // flow. Silent on permission denial.
+  // ---------------------------------------------------------------------------
+  const YT_URL_RE = /https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)\/\S+/i;
+  let _lastAutoDetected = '';   // avoid re-toasting the same URL
+
+  // ---------------------------------------------------------------------------
+  // Multi-URL batch paste: if the user pastes a list of YouTube URLs
+  // (newline or space separated) into the URL input, queue them all
+  // as separate downloads instead of just dumping text into the field.
+  // Transforms "paste one at a time" into "paste a list, walk away."
+  // ---------------------------------------------------------------------------
+  function extractYoutubeUrls(text) {
+    if (!text) return [];
+    const re = new RegExp(YT_URL_RE.source, 'gi');
+    return (text.match(re) || []).map(u => u.trim());
+  }
+
+  async function queueBatchDownload(urls) {
+    if (!urls.length) return;
+    // Use current form values as the batch template (or native defaults).
+    const fmt = (document.getElementById('opt-format') || {}).value || 'mp4';
+    const isVideo = VIDEO_FORMATS.has(fmt);
+    const resolution = (document.getElementById('opt-quality') || {}).value || 'best';
+    const audio_bitrate = (document.getElementById('opt-bitrate') || {}).value || '192';
+    const want_transcript = !!(document.getElementById('opt-transcript') || {}).checked;
+    const want_thumbnail = !!(document.getElementById('opt-thumbnail') || {}).checked;
+
+    toast(`Queueing ${urls.length} downloads...`, 'ok');
+    let queued = 0;
+    for (const url of urls) {
+      try {
+        const resp = await api('POST', '/api/download', {
+          url,
+          format_ext: fmt,
+          resolution: isVideo ? resolution : null,
+          audio_bitrate: isVideo ? null : audio_bitrate,
+          want_transcript,
+          want_thumbnail,
+          // No title -- server fetches the real one during yt-dlp probe.
+        });
+        if (resp.ok) {
+          // Use the URL as the placeholder title until the server
+          // fills in the real one via progress updates.
+          addJob(resp.job_id, url);
+          queued++;
+        }
+      } catch (ex) { /* keep going through the list */ }
+    }
+    toast(
+      queued === urls.length
+        ? `Queued all ${queued}`
+        : `Queued ${queued}/${urls.length} (${urls.length - queued} failed)`,
+      queued === urls.length ? 'ok' : 'warn'
+    );
+  }
+
+  async function autoDetectClipboard() {
+    try {
+      const txt = (await navigator.clipboard.readText() || '').trim();
+      if (!txt) return;
+      if (!YT_URL_RE.test(txt)) return;     // not a YouTube URL
+      if (txt === _lastAutoDetected) return; // already offered this one
+
+      const input = document.getElementById('url-input');
+      // Don't clobber: only autofill if input is empty OR has stale
+      // content that's already been loaded and is different from this.
+      if (input.value.trim() === txt) return;  // already in the box
+      if (input.value.trim() !== '' && !currentInfo) return;  // user mid-typing
+
+      input.value = txt;
+      _lastAutoDetected = txt;
+      toast('URL detected on clipboard · Enter to load', 'ok');
+    } catch (e) {
+      // Clipboard perms denied or not in a user gesture -- silent.
     }
   }
 
@@ -1755,8 +1901,14 @@
   // case where the user switched away for a while and the server's about
   // to time out)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') sendHeartbeat();
+    if (document.visibilityState === 'visible') {
+      sendHeartbeat();
+      autoDetectClipboard();  // check clipboard on alt-tab back
+    }
   });
+  // Also check on raw window focus (covers cases where the window is
+  // still "visible" per the API but the user just clicked back into it).
+  window.addEventListener('focus', () => { autoDetectClipboard(); });
 
   // Init
   wireSettingsControls();   // binds panel -> SETTINGS -> applyUISettings
@@ -1764,11 +1916,59 @@
   loadHistory();
   loadActivity();
 
-  // Esc closes the settings panel (matches modal behavior).
+  // Multi-URL paste: intercept paste on the URL input. If the pasted
+  // text has 2+ YouTube URLs, queue them all as separate downloads
+  // instead of stuffing everything into the input field.
+  const _urlInput = document.getElementById('url-input');
+  if (_urlInput) {
+    _urlInput.addEventListener('paste', (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+      const urls = extractYoutubeUrls(text);
+      if (urls.length < 2) return;  // single URL -> default paste behavior
+      e.preventDefault();
+      if (urls.length > 5 && !confirm(
+            `Queue ${urls.length} downloads?\n\nUses current format/quality selections.`
+          )) return;
+      _urlInput.value = '';
+      queueBatchDownload(urls);
+    });
+  }
+
+  // -------------------------------------------------------------------
+  // Keyboard shortcuts cheatsheet
+  // -------------------------------------------------------------------
+  function openShortcuts() {
+    document.getElementById('sc-back').classList.add('active');
+  }
+  function closeShortcuts() {
+    document.getElementById('sc-back').classList.remove('active');
+  }
+
+  // Global keydown: Esc closes things, "?" shows cheatsheet, Ctrl+,
+  // opens settings (universal preferences shortcut).
   document.addEventListener('keydown', (e) => {
+    // Esc: close settings panel or shortcuts modal
     if (e.key === 'Escape') {
+      const sc = document.getElementById('sc-back');
+      if (sc && sc.classList.contains('active')) { closeShortcuts(); return; }
       const panel = document.getElementById('settings-panel');
       if (panel && panel.classList.contains('active')) closeSettings();
+      return;
+    }
+    // Ctrl+, opens settings (Windows/macOS convention for preferences)
+    if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+      e.preventDefault();
+      openSettings();
+      return;
+    }
+    // ? shows the shortcuts cheatsheet -- but only if the user isn't
+    // typing in an input (otherwise typing ? in the URL field would
+    // trigger it). Shift+/ produces "?" on US keyboards.
+    if (e.key === '?') {
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+      e.preventDefault();
+      openShortcuts();
     }
   });
 </script>
