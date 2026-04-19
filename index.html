@@ -35,6 +35,50 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
+
+  /* =================================================================
+     Custom frameless title bar. The native Windows chrome is hidden
+     (frameless=True on the pywebview window); this is what replaces
+     it. 32px tall, full-width, dark to match the app. -webkit-app-
+     region drives drag-to-move; the buttons opt out via no-drag so
+     clicks land.
+     ================================================================= */
+  .title-bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 32px;
+    z-index: 300;  /* above side-rail (90) + settings panel (160) */
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 0 0 14px;
+    -webkit-app-region: drag;
+    user-select: none;
+    font-size: 11px; color: var(--text-3);
+  }
+  .tb-brand {
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 500; letter-spacing: 0.3px;
+  }
+  .tb-brand .tb-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.6);
+  }
+  .tb-brand .tb-name { color: var(--text-2); }
+  .tb-controls {
+    display: flex; height: 100%;
+    -webkit-app-region: no-drag;
+  }
+  .tb-btn {
+    width: 46px; height: 100%;
+    background: transparent; border: none; color: var(--text-3);
+    cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.12s, color 0.12s;
+  }
+  .tb-btn svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+  .tb-btn:hover { background: var(--bg-2); color: var(--text); }
+  /* Windows-convention close button: red-fills on hover, white glyph */
+  .tb-close:hover { background: #e81123; color: #fff; }
   /* min-height: 100vh (instead of height: 100%) lets the body grow
      past the viewport when needed AND lets the 3-column grid
      flex-grow to fill any screen height. align-items: center keeps
@@ -46,18 +90,17 @@
      under it). 20px on the right for visual balance. */
   html { height: 100%; }
   /* Hard-locked viewport: body fills the window exactly once and never
-     scrolls. Every tall piece of content (history lists, active queue,
-     previous downloads) scrolls INSIDE its card via .scroll-list. This
-     is what keeps the three-column layout feeling like a dashboard
-     instead of a web page.
+     scrolls. Every tall piece of content scrolls INSIDE its card via
+     .scroll-list.
 
-     padding-left: 72px accounts for the fixed left rail; padding-right
-     has slack for the column gutter; top/bottom kept tight. */
+     padding-top: 32px accounts for the fixed custom title bar at the
+     top; padding-left: 72px accounts for the fixed left rail.  The
+     extra ~20px top gutter after that gives h1 some breathing room. */
   body {
     height: 100vh;
     overflow: hidden;
     display: flex; flex-direction: column; align-items: center;
-    padding: 26px 20px 24px 72px;
+    padding: 52px 20px 24px 72px;
   }
 
   /* =================================================================
@@ -67,14 +110,14 @@
      built-in sidebar rather than a floating button.
      ================================================================= */
   .side-rail {
-    position: fixed; top: 0; left: 0; bottom: 0;
+    position: fixed; top: 32px; left: 0; bottom: 0;  /* below title bar */
     width: 52px;
     background: var(--bg-1);
     border-right: 1px solid var(--border);
     z-index: 90;  /* below settings backdrop (150) + panel (160) */
     display: flex; flex-direction: column;
     align-items: center;
-    padding: 18px 0 14px;
+    padding: 14px 0;
     gap: 8px;
   }
   /* Visual grouping: primary nav buttons up top, gear always at bottom */
@@ -551,7 +594,7 @@
   }
   .settings-back.active { opacity: 1; pointer-events: auto; }
   .settings-panel {
-    position: fixed; top: 0; left: 0; bottom: 0;
+    position: fixed; top: 32px; left: 0; bottom: 0;  /* below title bar */
     width: 340px; max-width: 100vw;
     background: var(--bg-1); border-right: 1px solid var(--border-2);
     z-index: 160; transform: translateX(-105%);
@@ -867,6 +910,29 @@
 </style>
 </head>
 <body>
+
+  <!-- Custom title bar. Replaces the native Windows chrome (the
+       pywebview window is frameless=True). Draggable via
+       -webkit-app-region; control buttons opt out to receive clicks.
+       Double-click on the bar itself toggles maximize (standard OS
+       convention). -->
+  <div class="title-bar" id="title-bar" ondblclick="tbMaximize(event)">
+    <div class="tb-brand">
+      <span class="tb-dot"></span>
+      <span class="tb-name">YT Grab</span>
+    </div>
+    <div class="tb-controls">
+      <button class="tb-btn" onclick="tbMinimize()" title="Minimize" aria-label="Minimize">
+        <svg viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5"/></svg>
+      </button>
+      <button class="tb-btn" onclick="tbMaximize()" title="Maximize" aria-label="Maximize">
+        <svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8"/></svg>
+      </button>
+      <button class="tb-btn tb-close" onclick="tbClose()" title="Close" aria-label="Close">
+        <svg viewBox="0 0 10 10"><line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/></svg>
+      </button>
+    </div>
+  </div>
 
   <!-- Permanent left edge rail. Always visible, hosts the utility
        buttons. The full settings panel slides out OVER the rail when
@@ -2408,6 +2474,25 @@
   }
   function closeShortcuts() {
     document.getElementById('sc-back').classList.remove('active');
+  }
+
+  // -------------------------------------------------------------------
+  // Title-bar controls. The buttons call Python-exposed functions via
+  // pywebview.api -- see _tb_minimize / _tb_maximize_toggle / _tb_close
+  // in server.py. All wrapped in try/catch because pywebview may not
+  // be initialized yet during the first render tick; a late click still
+  // fires once it's ready.
+  // -------------------------------------------------------------------
+  function tbMinimize() {
+    try { window.pywebview && window.pywebview.api._tb_minimize(); } catch {}
+  }
+  function tbMaximize(evt) {
+    // Swallow double-click-bubble when buttons trigger this directly.
+    if (evt) evt.preventDefault();
+    try { window.pywebview && window.pywebview.api._tb_maximize_toggle(); } catch {}
+  }
+  function tbClose() {
+    try { window.pywebview && window.pywebview.api._tb_close(); } catch {}
   }
 
   // Rail button: open the downloads folder in Explorer. Server defaults

@@ -1802,7 +1802,44 @@ def _launch_pywebview():
         resizable=True,
         confirm_close=False,
         hidden=True,
+        # Frameless: we draw our own title bar in HTML/CSS so the app
+        # looks cohesively dark instead of showing the native Windows
+        # chrome. Drag handled via -webkit-app-region on the bar;
+        # min/max/close buttons wire to the exposed JS API below.
+        frameless=True,
+        easy_drag=False,   # we use CSS drag regions, not whole-window drag
     )
+
+    # Expose a tiny window-control API so the custom title bar's
+    # buttons can minimize / maximize / close the OS window from JS.
+    # pywebview.api.* in the frontend calls these methods here.
+    def _tb_minimize():
+        try: window.minimize()
+        except Exception: pass
+
+    def _tb_maximize_toggle():
+        # pywebview 5 doesn't expose a toggle, so we drive it directly
+        # via Win32. IsZoomed reports current maximized state; SW_RESTORE
+        # restores from max, SW_MAXIMIZE re-maximizes. Works whether
+        # the window is currently normal or maximized.
+        try:
+            import ctypes
+            hwnd = _find_my_window_hwnd(require_visible=True)
+            if not hwnd: return
+            SW_RESTORE = 9
+            SW_MAXIMIZE = 3
+            if ctypes.windll.user32.IsZoomed(hwnd):
+                ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+            else:
+                ctypes.windll.user32.ShowWindow(hwnd, SW_MAXIMIZE)
+        except Exception:
+            pass
+
+    def _tb_close():
+        try: window.destroy()
+        except Exception: pass
+
+    window.expose(_tb_minimize, _tb_maximize_toggle, _tb_close)
 
     def _debug_log(msg):
         """Write a diagnostic line to debug.log next to server.py so we
