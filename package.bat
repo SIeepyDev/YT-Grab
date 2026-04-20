@@ -26,6 +26,10 @@ mkdir "dist\YTGrab-pkg\source"
 REM Copy the exe to the package root
 copy /y "dist\YTGrab.exe" "dist\YTGrab-pkg\YTGrab.exe" >nul
 
+REM Bundle the uninstaller alongside the .exe so users can cleanly
+REM remove app data (%LOCALAPPDATA%\YTGrab) and shortcuts in one click.
+copy /y "uninstall.bat" "dist\YTGrab-pkg\uninstall.bat" >nul
+
 REM Copy source fallback files. venv and dist are excluded (recipient
 REM recreates venv on their first launch.bat run). launch.vbs is the
 REM primary silent launcher; launch.bat is included as a visible fallback
@@ -98,6 +102,13 @@ echo [yt-dl pkg] Writing FRIEND_README.txt...
   echo Stopping it
   echo -----------
   echo Just close the browser tab. Server auto-shuts-down within a minute.
+  echo.
+  echo.
+  echo Uninstalling
+  echo ------------
+  echo Run uninstall.bat to wipe app data ^(%%LOCALAPPDATA%%\YTGrab^) and
+  echo shortcuts. Your downloads folder is left alone -- back it up or
+  echo delete it yourself if you're done with the videos too.
   echo.
 ) > "dist\YTGrab-pkg\FRIEND_README.txt"
 
