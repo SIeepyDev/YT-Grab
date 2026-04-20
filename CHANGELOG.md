@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.14.0...v1.15.0) (2026-04-20)
+
+
+### Features
+
+* add notify-only update checker ([5353651](https://github.com/SIeepyDev/YT-Grab/commit/5353651fb21c2aba5712b86825ce57d3296904fe))
+
 ## [1.14.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.13.0...v1.14.0) (2026-04-20)
 
 
