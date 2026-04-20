@@ -1747,17 +1747,43 @@ def _send_key_combo(modifiers, vk):
 # goes here.
 
 
-def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
-    """After spawning a new Explorer window via ShellExecuteW, poll for
-    it to appear in Shell.Application.Windows() and then focus + center
-    it. Without this polling step, the focus-activation fires before
-    the window exists and Explorer stays behind our app window.
+def _snapshot_explorer_hwnds():
+    """Return a set of HWNDs of every open file: Explorer window. Used
+    as a "before" snapshot so we can identify a newly-spawned window
+    by diff after ShellExecuteW."""
+    result = set()
+    try:
+        import ctypes
+        try:
+            ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+        except Exception:
+            pass
+        import comtypes.client
+        shell = comtypes.client.CreateObject("Shell.Application")
+        windows = shell.Windows()
+        for i in range(windows.Count):
+            try:
+                w = windows.Item(i)
+                if w is None:
+                    continue
+                loc = (w.LocationURL or "")
+                if loc.lower().startswith("file:"):
+                    result.add(int(w.HWND))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return result
 
-    v1.11.2: once the window's HWND is captured, we record it as
-    _our_explorer_hwnd so the next open-folder click can close this
-    window before spawning a replacement (single-window behavior)."""
+
+def _wait_for_new_explorer(before_hwnds, folder_path, timeout_sec=3.0):
+    """After spawning a new Explorer window via ShellExecuteW, block
+    until it shows up and return its HWND. Prefers a HWND that (a)
+    wasn't in `before_hwnds` AND (b) is showing the expected path.
+    Falls back to "any new HWND" if path match fails (Explorer may not
+    have settled its LocationURL yet). Returns None on timeout."""
     if not sys.platform.startswith("win"):
-        return False
+        return None
     import ctypes
     try:
         ctypes.windll.ole32.CoInitializeEx(None, 0x2)
@@ -1765,13 +1791,54 @@ def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
         pass
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
-        hwnd = _find_explorer_hwnd_for_path(folder_path)
-        if hwnd:
-            _activate_explorer_hwnd(hwnd, center=True)
-            _set_our_explorer(hwnd)
-            return True
-        time.sleep(0.15)
-    return False
+        # Preferred: new HWND that's at the target path.
+        at_path = _find_explorer_hwnd_for_path(folder_path)
+        if at_path and at_path not in before_hwnds:
+            return at_path
+        # Fallback: any brand-new file: Explorer HWND.
+        now = _snapshot_explorer_hwnds()
+        new = now - before_hwnds
+        if new:
+            return next(iter(new))
+        time.sleep(0.1)
+    # Timed out -- last-ditch: accept a same-path hwnd even if it was
+    # in before_hwnds (shouldn't happen but keeps behavior graceful).
+    return _find_explorer_hwnd_for_path(folder_path)
+
+
+def _spawn_and_track_explorer(target_path, is_file_reveal=False):
+    """Spawn a fresh Explorer window at target_path (or revealing a
+    file if is_file_reveal). Blocks briefly until the window appears,
+    captures its HWND as _our_explorer_hwnd, activates+centers it.
+
+    The blocking is deliberate -- makes HWND tracking race-free so a
+    rapid follow-up click knows which window to close. Typical wait
+    is ~200-600ms; capped at 3 seconds."""
+    import ctypes
+    before = _snapshot_explorer_hwnds()
+    try:
+        ctypes.windll.user32.AllowSetForegroundWindow(-1)
+        ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)        # VK_MENU down
+        ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0)   # VK_MENU up
+    except Exception:
+        pass
+    if is_file_reveal:
+        params = f'/select,"{target_path}"'
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "open", "explorer.exe", params, None, 1
+        )
+        # /select points at the file; the window shows its parent dir.
+        poll_path = Path(target_path).parent
+    else:
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "open", str(target_path), None, None, 1
+        )
+        poll_path = target_path
+    new_hwnd = _wait_for_new_explorer(before, poll_path)
+    if new_hwnd:
+        _activate_explorer_hwnd(new_hwnd, center=True)
+        _set_our_explorer(new_hwnd)
+    return new_hwnd
 
 
 @app.route("/api/open_previous_folder", methods=["POST"])
@@ -1786,13 +1853,12 @@ def api_open_previous_folder():
         target_path.mkdir(exist_ok=True)   # make sure it's there
         if sys.platform.startswith("win"):
             import ctypes
-            # v1.11.2: if ANY Explorer window is already at this exact
-            # path (ours or the user's), focus it and adopt it as ours.
-            # Avoids a flicker when the window is already correct.
+            # v1.12.1: if ANY Explorer window is already at this exact
+            # path, focus it and adopt it as ours. Any previously-
+            # tracked window at a DIFFERENT path gets closed so we
+            # never leave stragglers around.
             existing_here = _find_explorer_hwnd_for_path(target_path)
             if existing_here:
-                # A previously-tracked window at a DIFFERENT path needs
-                # to go so we don't leave stragglers.
                 prev = _our_explorer_hwnd
                 if prev and prev != existing_here and _is_window_alive(prev):
                     _close_hwnd(prev)
@@ -1801,24 +1867,11 @@ def api_open_previous_folder():
                 return jsonify({"ok": True, "reused": True})
 
             # No window at target. Close our previously-tracked window
-            # (if any) so we never keep more than one YT-Grab-spawned
-            # Explorer around, then spawn fresh.
+            # so we never leave more than one YT-Grab Explorer around,
+            # then spawn fresh. Spawn + capture HWND happens SYNCHRO-
+            # NOUSLY so a rapid follow-up click knows what to close.
             _close_our_explorer()
-
-            try:
-                ctypes.windll.user32.AllowSetForegroundWindow(-1)
-                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
-                ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0)
-            except Exception:
-                pass
-            ctypes.windll.shell32.ShellExecuteW(
-                None, "open", str(target_path), None, None, 1
-            )
-            threading.Thread(
-                target=_focus_newly_spawned_explorer,
-                args=(target_path,),
-                daemon=True,
-            ).start()
+            _spawn_and_track_explorer(target_path)
         elif sys.platform == "darwin":
             subprocess.Popen(["open", str(target_path)])
         else:
@@ -1845,9 +1898,10 @@ def api_open_folder():
             import ctypes
             target_folder = target_path.parent if target_path.is_file() else target_path
 
-            # v1.11.2: if ANY Explorer window is already at this folder
-            # (ours or user's), focus it and adopt it as ours. Avoids a
-            # flicker when the right window is already on screen.
+            # v1.12.1: if ANY Explorer window is already at this folder
+            # (ours or user's), focus it and adopt it as ours. A
+            # previously-tracked window at a different path gets closed
+            # so we don't leave stragglers.
             existing_here = _find_explorer_hwnd_for_path(target_folder)
             if existing_here:
                 prev = _our_explorer_hwnd
@@ -1858,32 +1912,12 @@ def api_open_folder():
                 return jsonify({"ok": True, "reused": True})
 
             # Close our previously-tracked window before spawning a new
-            # one so YT Grab never leaves more than one Explorer window
-            # around. Doesn't touch user-opened Explorer windows.
+            # one (single-window guarantee). Then spawn + capture HWND
+            # SYNCHRONOUSLY so a rapid follow-up click can close us.
             _close_our_explorer()
-
-            # Spawn new, using the focus-stealing workaround stack so
-            # Explorer comes forward from behind our app-mode window.
-            try:
-                ctypes.windll.user32.AllowSetForegroundWindow(-1)
-                ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)         # VK_MENU down
-                ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0)    # VK_MENU up
-            except Exception:
-                pass
-            if target_path.is_file():
-                params = f'/select,"{target_path}"'
-                ctypes.windll.shell32.ShellExecuteW(None, "open", "explorer.exe", params, None, 1)
-            else:
-                ctypes.windll.shell32.ShellExecuteW(None, "open", str(target_path), None, None, 1)
-            # Post-spawn poll: the ShellExecuteW call returns immediately
-            # but Explorer hasn't finished creating its window yet. Wait
-            # for the window to appear, then activate + center it. Runs
-            # in a background thread so we don't block the HTTP response.
-            threading.Thread(
-                target=_focus_newly_spawned_explorer,
-                args=(target_folder,),
-                daemon=True,
-            ).start()
+            _spawn_and_track_explorer(
+                target_path, is_file_reveal=target_path.is_file()
+            )
         elif sys.platform == "darwin":
             subprocess.Popen(["open", "-R" if target_path.is_file() else "", str(target_path)])
         else:
