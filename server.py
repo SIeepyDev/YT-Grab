@@ -1502,6 +1502,65 @@ def _center_window(hwnd, width=1200, height=800):
         pass
 
 
+# ---------------------------------------------------------------------------
+# Single-window Explorer tracking (v1.11.2)
+# ---------------------------------------------------------------------------
+# We remember the HWND of the Explorer window WE spawned. On the next
+# open-folder click, if that HWND is still alive, we close it before
+# spawning a new one -- guaranteeing YT Grab never leaves more than one
+# Explorer window on screen at a time. User-opened Explorer windows
+# (Documents, Desktop, etc.) are never touched -- we only close our
+# own tracked HWND.
+_our_explorer_hwnd = None
+_our_explorer_lock = threading.Lock()
+
+
+def _is_window_alive(hwnd):
+    """True if hwnd still refers to a live top-level window."""
+    if not hwnd:
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.user32.IsWindow(hwnd))
+    except Exception:
+        return False
+
+
+def _close_hwnd(hwnd, wait_ms=400):
+    """Post WM_CLOSE to hwnd and wait up to wait_ms for it to die."""
+    if not hwnd:
+        return
+    try:
+        import ctypes
+        WM_CLOSE = 0x0010
+        ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+        deadline = time.time() + (wait_ms / 1000.0)
+        while time.time() < deadline:
+            if not _is_window_alive(hwnd):
+                return
+            time.sleep(0.02)
+    except Exception:
+        pass
+
+
+def _set_our_explorer(hwnd):
+    """Record hwnd as the Explorer window we own."""
+    global _our_explorer_hwnd
+    with _our_explorer_lock:
+        _our_explorer_hwnd = hwnd
+
+
+def _close_our_explorer():
+    """If we're tracking an Explorer window and it's still alive, close
+    it. Clears the tracked HWND either way."""
+    global _our_explorer_hwnd
+    with _our_explorer_lock:
+        hwnd = _our_explorer_hwnd
+        _our_explorer_hwnd = None
+    if hwnd and _is_window_alive(hwnd):
+        _close_hwnd(hwnd)
+
+
 def _activate_explorer_hwnd(hwnd, center=False):
     """Bring an Explorer window to foreground. If center=True, also
     resize+center it on the primary monitor (for newly-spawned windows)."""
@@ -1692,7 +1751,11 @@ def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
     """After spawning a new Explorer window via ShellExecuteW, poll for
     it to appear in Shell.Application.Windows() and then focus + center
     it. Without this polling step, the focus-activation fires before
-    the window exists and Explorer stays behind our app window."""
+    the window exists and Explorer stays behind our app window.
+
+    v1.11.2: once the window's HWND is captured, we record it as
+    _our_explorer_hwnd so the next open-folder click can close this
+    window before spawning a replacement (single-window behavior)."""
     if not sys.platform.startswith("win"):
         return False
     import ctypes
@@ -1705,6 +1768,7 @@ def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
         hwnd = _find_explorer_hwnd_for_path(folder_path)
         if hwnd:
             _activate_explorer_hwnd(hwnd, center=True)
+            _set_our_explorer(hwnd)
             return True
         time.sleep(0.15)
     return False
@@ -1722,15 +1786,25 @@ def api_open_previous_folder():
         target_path.mkdir(exist_ok=True)   # make sure it's there
         if sys.platform.startswith("win"):
             import ctypes
-            # Prefer reusing a window already at this exact path.
-            # v1.11.1: the Navigate2 COM approach from v1.11 broke
-            # File Explorer on Win11 (method isn't reliably implemented
-            # on modern Explorer). Back to focus-only: if the exact
-            # folder is already open, bring it forward; otherwise spawn
-            # a fresh window. Multiple windows is acceptable, silent
-            # failure is not.
-            if _focus_existing_explorer(target_path):
+            # v1.11.2: if ANY Explorer window is already at this exact
+            # path (ours or the user's), focus it and adopt it as ours.
+            # Avoids a flicker when the window is already correct.
+            existing_here = _find_explorer_hwnd_for_path(target_path)
+            if existing_here:
+                # A previously-tracked window at a DIFFERENT path needs
+                # to go so we don't leave stragglers.
+                prev = _our_explorer_hwnd
+                if prev and prev != existing_here and _is_window_alive(prev):
+                    _close_hwnd(prev)
+                _set_our_explorer(existing_here)
+                _activate_explorer_hwnd(existing_here, center=False)
                 return jsonify({"ok": True, "reused": True})
+
+            # No window at target. Close our previously-tracked window
+            # (if any) so we never keep more than one YT-Grab-spawned
+            # Explorer around, then spawn fresh.
+            _close_our_explorer()
+
             try:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
@@ -1771,17 +1845,25 @@ def api_open_folder():
             import ctypes
             target_folder = target_path.parent if target_path.is_file() else target_path
 
-            # Try to reuse an already-open Explorer window at this folder.
-            # If yes, we're done -- no new window spawned.
-            # v1.11.1: reverted the cross-window Navigate2 reuse from
-            # v1.11. Navigate2 on Win11 File Explorer either no-ops or
-            # hijacks the wrong window. Focus-only is reliable.
-            if _focus_existing_explorer(target_folder):
+            # v1.11.2: if ANY Explorer window is already at this folder
+            # (ours or user's), focus it and adopt it as ours. Avoids a
+            # flicker when the right window is already on screen.
+            existing_here = _find_explorer_hwnd_for_path(target_folder)
+            if existing_here:
+                prev = _our_explorer_hwnd
+                if prev and prev != existing_here and _is_window_alive(prev):
+                    _close_hwnd(prev)
+                _set_our_explorer(existing_here)
+                _activate_explorer_hwnd(existing_here, center=False)
                 return jsonify({"ok": True, "reused": True})
 
-            # No existing window at that path. Spawn new, using the
-            # focus-stealing workaround stack so Explorer comes forward
-            # from behind our app-mode window.
+            # Close our previously-tracked window before spawning a new
+            # one so YT Grab never leaves more than one Explorer window
+            # around. Doesn't touch user-opened Explorer windows.
+            _close_our_explorer()
+
+            # Spawn new, using the focus-stealing workaround stack so
+            # Explorer comes forward from behind our app-mode window.
             try:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)         # VK_MENU down
