@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/SIeepyDev/yt-grab/compare/v1.12.0...v1.12.1) (2026-04-20)
+
+
+### Bug Fixes
+
+* synchronous HWND capture so rapid clicks close old window ([26a3d2f](https://github.com/SIeepyDev/yt-grab/commit/26a3d2f1c50f86834b96edba6deba33c446f5fea))
+
 ## [1.12.0](https://github.com/SIeepyDev/yt-grab/compare/v1.11.0...v1.12.0) (2026-04-20)
 
 
