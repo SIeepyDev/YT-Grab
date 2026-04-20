@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.15.0...v1.16.0) (2026-04-20)
+
+
+### Features
+
+* add in-app export picker for history and previous ([d87d8a8](https://github.com/SIeepyDev/YT-Grab/commit/d87d8a87d91bf243f738241735ff0d14e495ee44))
+* add in-app export picker for history and previous ([826e2de](https://github.com/SIeepyDev/YT-Grab/commit/826e2de8a1fd93338e6ca4375b0f3750b8d7b6e1))
+
 ## [1.15.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.14.0...v1.15.0) (2026-04-20)
 
 
