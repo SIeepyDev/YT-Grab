@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.14.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.13.0...v1.14.0) (2026-04-20)
+
+
+### Features
+
+* attach assets to existing release instead of recreating ([bb25c33](https://github.com/SIeepyDev/YT-Grab/commit/bb25c33c9ab1b669f9561458b691f7f1c36353b9))
+
+
+### Docs
+
+* add README screenshots ([34978f5](https://github.com/SIeepyDev/YT-Grab/commit/34978f58ed4e07df958e0bdc44dadbb3bbf0f1bc))
+* swap to 0BSD, neutral license note, fix repo links ([ee5dadc](https://github.com/SIeepyDev/YT-Grab/commit/ee5dadcb7eaaf5aacb1c93d386a504e190f381ce))
+
 ## [1.13.0](https://github.com/SIeepyDev/yt-grab/compare/v1.12.1...v1.13.0) (2026-04-20)
 
 
