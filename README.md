@@ -17,7 +17,9 @@ A clean, local-first YouTube downloader for Windows. Native desktop window, prem
 - **Rename from the UI** — F2, double-click the title, or the pencil button. Renames the folder and every file inside on disk.
 - **Previous Downloads log** — once you delete something, it stays in the log so you can redownload with one click.
 - **Ctrl+Z** — undoes the last delete (files come back from the Recycle Bin reference).
-- **Settings panel** — accent color, default format / quality, default sidecar toggles. Persists across sessions.
+- **Themes panel** — right-side sidebar with Background, Gradient, Typography, Glass, and Saved Views sections. All dials live in a single 300 px drawer, none of them scroll at 768 p or above.
+- **Title-bar mode toggle** — one-click cycle between Dark · Light · System without opening a panel. Icon swaps between moon · sun · monitor to match.
+- **Left sidebar Settings** — accent color (HSV ring + hex), density, dyslexia-friendly font, high-contrast mode, hide-hints toggle, and Reset all settings. Everything persists across sessions via WebView2 localStorage, pinned to `%LOCALAPPDATA%\YTGrab\webview` so it survives renaming or moving the exe.
 - **Native Windows integration** — pinned Start Menu + Desktop shortcuts, own taskbar identity, WebView2 under the hood (no Chrome required).
 
 ## Quick start (source mode, dev-friendly)
@@ -65,9 +67,9 @@ Windows 11's Smart App Control (SAC) blocks unsigned PyInstaller binaries on som
 | `build.bat` + `build_icon.py` | Build pipeline for the .exe. |
 | `package.bat` | Wraps exe + source fallback into a shippable zip. |
 | `clean.bat` | Factory reset — wipes venv, dist, bin, downloads, history. |
-| `ship.ps1` | One-shot release: detects version in `index.html`, pulls matching README changelog, commits + tags + pushes. |
-| `backfill_tags.ps1` | One-time retroactive tagger — walks `git log`, tags every `vX.X:` commit, pushes. |
-| `.github/workflows/release.yml` | Runs on any `v*` tag push: extracts the matching README section and creates a GitHub Release automatically. |
+| `backfill_tags.bat` / `backfill_tags.ps1` | One-time retroactive tagger — walks `git log`, tags every `vX.X:` commit, pushes. Double-click the `.bat`. |
+| `.github/workflows/release-please.yml` | Parses Conventional Commits on push to `main`, maintains a living release PR with the next version + changelog. Merge the PR → tag + GitHub Release land automatically. |
+| `.release-please-manifest.json` | Single source of truth for the current version. Auto-bumped; the `<!-- x-release-please-version -->` marker in `index.html` stays in sync. |
 | `downloads/` | User-facing output. Per-video folders with the main file + optional sidecars. |
 | `history.json` | Current on-disk downloads. |
 | `activity.json` | Log of everything ever downloaded (including deleted). |
@@ -99,12 +101,20 @@ The Flask server runs in a background thread; the main thread is pywebview. A he
 
 ## Shipping a new version
 
-1. Bump the version string in `index.html` (search for `YT Grab v`).
-2. Add a `### vX.X — Title (YYYY-MM)` section to the top of the Changelog below with the details of the release.
-3. Double-click `ship.ps1`. It reads the version, pulls the matching changelog block, commits, tags, and pushes everything in one shot.
-4. GitHub Actions picks up the tag and creates a full GitHub Release at `/releases/tag/vX.X` with the changelog as the body — no manual release creation needed.
+Shipping is automated by [release-please](https://github.com/googleapis/release-please). No local ship scripts, no manual tag pushes — just commit in the [Conventional Commits](https://www.conventionalcommits.org) style and merge the release PR.
 
-First-time setup: run `backfill_tags.ps1` once to retroactively tag every historical `vX.X:` commit and push them all at once. The Release Action fires per tag, so the Releases page fills in automatically with the full project history.
+1. Make your changes. Commit with a prefix that tells release-please what kind of bump to apply:
+    - `feat: add Ctrl+K command palette` — minor bump (1.4.0 → 1.5.0), lands under **Features** in the changelog.
+    - `fix: gradient animation never stops` — patch bump (1.4.0 → 1.4.1), lands under **Bug Fixes**.
+    - `feat!: drop Python 3.9 support` or a footer of `BREAKING CHANGE: ...` — major bump.
+    - `chore:` / `ci:` / `test:` / `style:` — no bump, hidden from the changelog (use these for non-user-facing maintenance).
+2. Push to `main`. The `release-please` workflow opens (or updates) a pull request titled something like **chore(main): release 1.5.0**. It contains the computed version bump and an auto-generated `CHANGELOG.md` entry.
+3. Review the release PR. Edit the changelog body if you want to humanize the entries — release-please respects manual edits inside the release PR.
+4. Merge the release PR. That's the ship — release-please tags `v1.5.0`, updates `.release-please-manifest.json`, bumps the `x-release-please-version` marker in `index.html`, and publishes a GitHub Release with the changelog as the body.
+
+> Note: the commit format is enforced by convention, not tooling — release-please silently ignores commits that don't match, and those changes won't appear in the next changelog. Keep subjects ≤50 characters, imperative mood, no trailing period.
+
+First-time setup: double-click `backfill_tags.bat` once to retroactively tag every historical `vX.X:` commit and push them all at once. Those tags pre-populate the Releases page with the full project history before release-please takes over.
 
 ## Privacy
 
@@ -128,6 +138,32 @@ First-time setup: run `backfill_tags.ps1` once to retroactively tag every histor
 Built by [SleepyDev](https://github.com/SIeepyDev). Part of the Luna workspace tools family.
 
 ## Changelog
+
+### v1.5 — Layout polish + persistent settings (2026-04)
+
+Pass focused on everything *around* the themebar rather than adding new dials. The goal was getting the UI out of its own way: fewer panels, tighter layout, and settings that actually survive a reinstall.
+
+**Dark/Light/System moved to the title bar**
+- The themebar no longer has a Mode section. A single 24 × 24 icon button sits next to the "YT Grab" brand in the title bar and cycles **Dark → Light → System** on click. Icon swaps between moon / sun / monitor so the current mode is readable from anywhere in the app.
+- Frees ~75 px of vertical space in the themebar sidebar and removes a redundant "open drawer to change brightness" step.
+
+**Accessibility toggles moved to the left sidebar**
+- **Dyslexia-friendly font** and **High contrast** used to live in the Typography section. They're global preferences, not visual theme knobs — so they now stack with Hide-hints at the bottom of the left sidebar's Settings cluster, as iOS-style switches.
+- Themebar sidebar stays focused on purely visual customization; accessibility lives with the other global preferences (density, reset, about).
+
+**Background grid fits cleanly**
+- Dark mode shows 5 swatches (Default, Void, Graphite, Midnight, Slate) in a single row; light mode shows 3 (Default, Cream, Snow) in a single row. No more orphan Slate wrapping to row two.
+- Uses a mode-conditional CSS grid — `html[data-theme="light"] .bg-presets { grid-template-columns: repeat(3, 1fr); }` — so the picker always hugs its contents.
+
+**Breathing room restored**
+- The v1.4 compaction pass was over-eager. ~18 px of padding reinstated across section headers, toggle rows, and the themebar body. Still fits no-scroll at 1080 p / 900 p / 768 p.
+
+**Settings survive packaging**
+- pywebview's `storage_path` is now pinned to `%LOCALAPPDATA%\YTGrab\webview` with `private_mode=False`. Without this, WebView2 derives the localStorage path from the running process name, so `python server.py` and a packaged `YTGrab.exe` would look at different directories and lose settings between them. Every dial (accent, background, gradient, typography, glass, saved views, a11y toggles, density, hide-hints) now round-trips cleanly through close-and-reopen on both the source run and the frozen exe.
+
+**Under the hood**
+- Removed the dead `.mode-grid` / `.mode-card` CSS (~20 lines) and the `_syncThemeModeCards()` function + 4 call sites. The title-bar `_syncTbModeIcon()` covers the same responsibility in a third of the code.
+- Ship scripts (`ship.bat`, `ship.ps1`) and the old `.github/workflows/release.yml` are gone — [release-please](https://github.com/googleapis/release-please) handles versioning and GitHub Releases from Conventional Commits now. See **Shipping a new version** above.
 
 ### v1.4 — Saved Views + Command Palette (2026-04)
 

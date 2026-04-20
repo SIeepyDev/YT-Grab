@@ -35,3 +35,8 @@ debug.log
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude session ship helpers (safe to delete after use)
+v1.5-commits.md
+v1.5-commits.ps1
+v1.5-packaging-checklist.md

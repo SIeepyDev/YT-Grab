@@ -124,6 +124,22 @@
     box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.6);
   }
   .tb-brand .tb-name { color: var(--text-2); }
+  /* Mode-cycle button -- lives in the title bar next to the brand. Same
+     no-drag treatment as window controls so clicks land. Icon swap is
+     driven by JS via _syncTbModeIcon(). */
+  .tb-mode {
+    -webkit-app-region: no-drag;
+    margin-left: 10px;
+    width: 24px; height: 24px;
+    background: transparent; border: none;
+    border-radius: 6px;
+    color: var(--text-3);
+    cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.12s, color 0.12s;
+  }
+  .tb-mode:hover { background: var(--bg-2); color: var(--text); }
+  .tb-mode .tb-mode-icon { width: 14px; height: 14px; }
   .tb-controls {
     display: flex; height: 100%;
     -webkit-app-region: no-drag;
@@ -448,7 +464,7 @@
   .themebar-body {
     display: flex; flex-direction: column;
     flex: 1; min-height: 0;
-    padding: 6px 14px 14px;
+    padding: 4px 12px 8px;
     overflow-y: auto;
     opacity: 0; pointer-events: none;
     transition: opacity 0.15s 0.08s;
@@ -461,15 +477,15 @@
   .themebar-body::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
   /* (themebar-head removed -- the brand row now doubles as header) */
   .theme-section {
-    padding: 14px 0 18px;
+    padding: 4px 0 6px;
     border-top: 1px solid var(--border);
   }
-  .theme-section:first-child { border-top: none; padding-top: 4px; }
+  .theme-section:first-child { border-top: none; padding-top: 2px; }
   .theme-section h3 {
-    font-size: 10px; font-weight: 600;
+    font-size: 9px; font-weight: 600;
     color: var(--text-3); text-transform: uppercase;
     letter-spacing: 1px;
-    margin: 0 0 10px;
+    margin: 0 0 3px;
   }
   .theme-soon {
     padding: 12px 14px;
@@ -480,27 +496,9 @@
     font-size: 11px; font-style: italic;
     text-align: center;
   }
-  /* Mode picker: two cards side by side, Dark + Light. Click to switch.
-     Active card gets an accent ring + tinted background. */
-  .mode-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-  .mode-card {
-    padding: 14px 10px;
-    background: var(--bg-2);
-    border: 2px solid transparent;
-    border-radius: 10px;
-    color: var(--text-3);
-    font-size: 12px; font-weight: 500;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s, background 0.15s;
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
-  }
-  .mode-card:hover { color: var(--text); background: var(--bg-3); }
-  .mode-card.active {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: var(--accent-subtle);
-  }
-  .mode-card svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; }
+  /* Mode picker styles removed — the Dark/Light/System cards that
+     used to live in the themebar are gone. The single-button title
+     bar toggle (.tb-mode) styles live up in the title-bar block. */
 
   /* =================================================================
      Themebar controls — shared vocabulary used by Background and
@@ -509,23 +507,25 @@
      without each one inventing its own look.
      ================================================================= */
 
-  /* Preset card grid — two or three per row, each one a mini swatch
-     with a title. Used by Background and Gradient presets. */
+  /* Preset card grid — compact swatches.
+     Default: 4 cols (Gradient, 8 presets fit in 2 rows).
+     .three  : 3 cols (Typography weight picker).
+     Background uses its own .bg-presets grid below.       */
   .theme-presets {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
   }
-  .theme-presets.three { grid-template-columns: 1fr 1fr 1fr; }
+  .theme-presets.three { grid-template-columns: 1fr 1fr 1fr; gap: 5px; }
   .preset-card {
     position: relative;
-    padding: 8px;
+    padding: 3px;
     background: var(--bg-2);
-    border: 2px solid transparent;
-    border-radius: 10px;
+    border: 1.5px solid transparent;
+    border-radius: 6px;
     cursor: pointer;
     transition: border-color 0.15s, transform 0.15s, background 0.15s;
-    display: flex; flex-direction: column; gap: 6px;
+    display: flex; flex-direction: column; gap: 2px;
     text-align: center;
   }
   .preset-card:hover { background: var(--bg-3); transform: translateY(-1px); }
@@ -534,58 +534,61 @@
     background: var(--accent-subtle);
   }
   .preset-card .preset-preview {
-    height: 38px; border-radius: 6px;
+    height: 18px; border-radius: 3px;
     overflow: hidden; position: relative;
     background: var(--bg-3);
     border: 1px solid var(--border);
   }
   .preset-card .preset-label {
-    font-size: 10px; font-weight: 600;
+    font-size: 8.5px; font-weight: 600;
     color: var(--text-2);
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
+    line-height: 1.1;
   }
   .preset-card.active .preset-label { color: var(--accent); }
 
-  /* Helper text — quiet hint line beneath a control, explaining
-     what a toggle does without cluttering the label itself. */
+  /* Helper text — quiet hint line beneath a control. Kept tiny
+     so it barely takes space when present. Most sections don't
+     need one (v1.5 compact pass dropped them). */
   .theme-hint {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-4);
-    margin-top: 4px;
-    line-height: 1.4;
+    margin-top: 2px;
+    line-height: 1.3;
+    opacity: 0.8;
   }
 
   /* Labeled slider row — tiny label on the left, accent-styled
      range on the right, numeric readout on the far right. */
   .theme-slider-row {
     display: grid;
-    grid-template-columns: 60px 1fr 32px;
+    grid-template-columns: 46px 1fr 26px;
     align-items: center;
-    gap: 10px;
-    margin-top: 10px;
+    gap: 8px;
+    margin-top: 3px;
   }
   .theme-slider-row label {
-    font-size: 10px; font-weight: 600;
+    font-size: 9px; font-weight: 600;
     color: var(--text-3); letter-spacing: 0.3px;
     text-transform: uppercase;
   }
   .theme-slider {
     -webkit-appearance: none; appearance: none;
-    width: 100%; height: 4px;
+    width: 100%; height: 3px;
     background: var(--bg-3);
     border-radius: 2px; outline: none;
     cursor: pointer;
   }
   .theme-slider::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
-    width: 14px; height: 14px;
+    width: 12px; height: 12px;
     background: var(--accent);
     border: 2px solid var(--bg-1);
     border-radius: 50%;
     box-shadow: 0 1px 4px rgba(0,0,0,0.35);
   }
   .theme-slider::-moz-range-thumb {
-    width: 14px; height: 14px;
+    width: 12px; height: 12px;
     background: var(--accent);
     border: 2px solid var(--bg-1);
     border-radius: 50%;
@@ -593,19 +596,19 @@
   }
   .theme-slider-val {
     font-family: var(--mono);
-    font-size: 10px; color: var(--text-3);
+    font-size: 9px; color: var(--text-3);
     text-align: right;
   }
 
   /* Toggle switch — one-line pill for boolean settings (noise, drift). */
   .theme-toggle-row {
     display: flex; align-items: center; justify-content: space-between;
-    margin-top: 10px;
-    font-size: 11px; color: var(--text-2);
+    margin-top: 4px;
+    font-size: 10px; color: var(--text-2);
   }
   .theme-toggle {
     position: relative;
-    width: 32px; height: 18px;
+    width: 28px; height: 16px;
     background: var(--bg-3);
     border-radius: 999px;
     cursor: pointer;
@@ -616,26 +619,30 @@
     content: '';
     position: absolute;
     top: 2px; left: 2px;
-    width: 14px; height: 14px;
+    width: 12px; height: 12px;
     background: var(--text-3);
     border-radius: 50%;
     transition: transform 0.2s, background 0.2s;
   }
   .theme-toggle.on { background: var(--accent-subtle); }
   .theme-toggle.on::after {
-    transform: translateX(14px);
+    transform: translateX(12px);
     background: var(--accent);
   }
 
   /* Background preset cards — same preset-card primitive as Gradient,
      but with a larger preview that fills with just the bg color. Kept
      under .bg-presets so we can filter dark/light via [data-theme] on
-     <html> without touching CSS specificity elsewhere. */
+     <html> without touching CSS specificity elsewhere. Column count
+     matches the visible-card count per theme so nothing gets orphaned
+     on a second row: dark has 5 (Default/Void/Graphite/Midnight/Slate),
+     light has 3 (Default/Cream/Snow). */
   .bg-presets {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr 1fr;
-    gap: 8px;
+    gap: 5px;
   }
+  html:not([data-theme="light"]) .bg-presets { grid-template-columns: repeat(5, 1fr); }
+  html[data-theme="light"] .bg-presets         { grid-template-columns: repeat(3, 1fr); }
   /* Hide the dark-only bgs when theme is light, and vice versa. */
   html[data-theme="light"] .bg-presets .preset-card[data-bg-mode="dark"] { display: none; }
   html:not([data-theme="light"]) .bg-presets .preset-card[data-bg-mode="light"] { display: none; }
@@ -1752,26 +1759,26 @@
      user-created ones can be deleted via the X on the card. */
   .view-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
   }
   .view-card {
     position: relative;
-    padding: 8px 8px 10px;
+    padding: 4px 5px 5px;
     background: var(--bg-2);
-    border: 2px solid transparent;
-    border-radius: 10px;
+    border: 1.5px solid transparent;
+    border-radius: 6px;
     cursor: pointer;
     transition: border-color 0.15s, transform 0.15s, background 0.15s;
-    display: flex; flex-direction: column; gap: 6px;
+    display: flex; flex-direction: column; gap: 2px;
     text-align: left;
     overflow: hidden;
   }
   .view-card:hover { background: var(--bg-3); transform: translateY(-1px); }
   .view-card.active { border-color: var(--accent); background: var(--accent-subtle); }
   .view-card .view-swatch {
-    height: 34px;
-    border-radius: 6px;
+    height: 16px;
+    border-radius: 3px;
     border: 1px solid var(--border);
     background: var(--bg-3);
     position: relative;
@@ -1785,39 +1792,61 @@
     mix-blend-mode: screen;
   }
   .view-card .view-name {
-    font-size: 11px; font-weight: 600;
+    font-size: 10px; font-weight: 600;
     color: var(--text-2);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    line-height: 1.2;
   }
   .view-card.active .view-name { color: var(--accent); }
   .view-card .view-sub {
-    font-size: 9px; color: var(--text-4);
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
+    display: none;
   }
   .view-card .view-del {
-    position: absolute; top: 4px; right: 4px;
-    width: 18px; height: 18px;
+    position: absolute; top: 3px; right: 3px;
+    width: 15px; height: 15px;
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     background: rgba(0,0,0,0.35);
     color: var(--text-3);
-    font-size: 11px; line-height: 1;
+    font-size: 10px; line-height: 1;
     cursor: pointer;
     opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
     display: flex; align-items: center; justify-content: center;
   }
   .view-card:hover .view-del { opacity: 1; }
   .view-card .view-del:hover { background: var(--danger); color: #fff; }
+  /* Save-view tile (lives as the last card in .view-grid). Dashed
+     border keeps the "add" affordance while matching tile sizing. */
+  .view-card.view-card-save {
+    border: 1.5px dashed var(--border-2);
+    background: transparent;
+    color: var(--text-2);
+  }
+  .view-card.view-card-save:hover {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+  }
+  .view-card.view-card-save:hover .view-name,
+  .view-card.view-card-save:hover .view-swatch-save { color: var(--accent); }
+  .view-swatch-save {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    color: var(--text-3);
+    background: transparent !important;
+    border-style: dashed !important;
+  }
+  .view-swatch-save::after { display: none !important; }
+  /* Legacy (no longer used but kept to avoid layout shift if JS
+     accidentally re-inserts the old standalone button). */
   .view-save-btn {
     width: 100%;
-    margin-top: 8px;
-    padding: 8px 10px;
+    margin-top: 5px;
+    padding: 5px 8px;
     background: var(--bg-2);
     border: 1px dashed var(--border-2);
-    border-radius: 8px;
+    border-radius: 6px;
     color: var(--text-3);
-    font-size: 11px; font-weight: 500;
+    font-size: 10px; font-weight: 500;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s, background 0.15s;
   }
@@ -2008,6 +2037,16 @@
     <div class="tb-brand">
       <span class="tb-dot"></span>
       <span class="tb-name">YT Grab</span>
+      <!-- Mode toggle: cycles dark → light → system on click. The icon
+           reflects the current mode. Lives in the title bar because
+           theme mode is a global app-level setting; the old Mode
+           section in the themebar was moved here to free vertical space
+           in the right sidebar. -->
+      <button class="tb-mode" id="tb-mode" onclick="cycleThemeMode()"
+              title="Toggle theme (dark / light / system)"
+              aria-label="Toggle theme mode">
+        <svg class="tb-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+      </button>
     </div>
     <div class="tb-controls">
       <button class="tb-btn" onclick="tbMinimize()" title="Minimize" aria-label="Minimize">
@@ -2161,17 +2200,18 @@
 
       <section class="sb-section">
         <h3>Settings</h3>
-        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.4</div>
+        <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.4.0 <!-- x-release-please-version --></div>
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
         <button class="settings-reset" onclick="resetSettings()" style="margin-top: 14px;">Reset all settings</button>
       </section>
 
-      <!-- Hide-hints toggle: iOS-style switch pinned at the bottom
-           of the sidebar, below Settings (per UX pass). A single
-           toggle deserves its own flavor rather than a generic
-           checkbox since it's the lone on/off control. -->
+      <!-- App-level toggles stack at the bottom of the sidebar. Hide
+           hints + two a11y toggles (dyslexia-friendly font, high
+           contrast) that used to live in the themebar's Typography
+           section. They're global preferences, not visual theme
+           knobs, so they belong here alongside density/reset. -->
       <label class="sb-toggle-row" for="set-hide-hint">
         <span class="sb-toggle-text">Hide keyboard shortcut hints</span>
         <span class="sb-toggle">
@@ -2179,13 +2219,29 @@
           <span class="sb-toggle-track"></span>
         </span>
       </label>
+      <label class="sb-toggle-row" for="set-dyslexia">
+        <span class="sb-toggle-text">Dyslexia-friendly font</span>
+        <span class="sb-toggle">
+          <input type="checkbox" id="set-dyslexia">
+          <span class="sb-toggle-track"></span>
+        </span>
+      </label>
+      <label class="sb-toggle-row" for="set-high-contrast">
+        <span class="sb-toggle-text">High contrast</span>
+        <span class="sb-toggle">
+          <input type="checkbox" id="set-high-contrast">
+          <span class="sb-toggle-track"></span>
+        </span>
+      </label>
     </div>
   </aside>
 
   <!-- Right-side theme panel. Collapsed 44px shows just a palette
-       icon. Expanded 300px shows Mode / Background /
-       Gradient sections. Currently only Mode is functional;
-       others are scaffolded placeholders for the next pass. -->
+       icon. Expanded 300px shows Background / Gradient / Typography
+       / Glass / Views sections. Dark/Light/System mode lives in the
+       title bar now; a11y toggles (dyslexia font, high contrast)
+       live in the left sidebar so this panel stays focused on
+       purely visual customization. -->
   <aside class="themebar" id="themebar" data-expanded="false" aria-label="Theme panel">
     <!-- Brand row doubles as the expand/collapse toggle. Icon on
          the left; "Themes" label fades in when expanded. -->
@@ -2204,40 +2260,10 @@
     </button>
 
     <div class="themebar-body">
-      <section class="theme-section">
-        <h3>Mode</h3>
-        <div class="mode-grid">
-          <button class="mode-card" id="mode-dark" onclick="setThemeMode('dark')">
-            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-            </svg>
-            Dark
-          </button>
-          <button class="mode-card" id="mode-light" onclick="setThemeMode('light')">
-            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="5"/>
-              <line x1="12" y1="1" x2="12" y2="3"/>
-              <line x1="12" y1="21" x2="12" y2="23"/>
-              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-              <line x1="1" y1="12" x2="3" y2="12"/>
-              <line x1="21" y1="12" x2="23" y2="12"/>
-              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-            </svg>
-            Light
-          </button>
-          <!-- System = follow OS prefers-color-scheme, live-updating. -->
-          <button class="mode-card" id="mode-system" onclick="setThemeMode('system')">
-            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="14" rx="2"/>
-              <path d="M8 20h8"/>
-              <path d="M12 16v4"/>
-            </svg>
-            System
-          </button>
-        </div>
-      </section>
+      <!-- Mode picker (Dark / Light / System) lives in the title bar
+           now — click the sun/moon/monitor icon next to the "YT Grab"
+           brand to cycle. Keeps this sidebar focused on visual theme
+           controls and frees ~73px of vertical space. -->
 
       <!-- ======== BACKGROUND ========
            Labeled preset cards for canvas color. Filtered by current
@@ -2281,11 +2307,10 @@
             <span class="preset-label">Snow</span>
           </button>
         </div>
-        <div class="theme-toggle-row" style="margin-top: 12px;">
+        <div class="theme-toggle-row">
           <span>Film grain</span>
           <span class="theme-toggle" id="bg-noise-toggle" onclick="toggleBgNoise()" role="switch" aria-label="Film grain"></span>
         </div>
-        <p class="theme-hint">Subtle analog noise overlay on the canvas. Adds depth without affecting contrast.</p>
       </section>
 
       <!-- ======== GRADIENT ========
@@ -2334,12 +2359,10 @@
                  min="0" max="100" value="40" oninput="setGradientIntensity(this.value)">
           <span class="theme-slider-val" id="grad-intensity-val">40%</span>
         </div>
-        <p class="theme-hint" style="margin-top: 2px;">How visible the mesh is. 0% hides it, 100% is full-bleed.</p>
-        <div class="theme-toggle-row" style="margin-top: 12px;">
+        <div class="theme-toggle-row">
           <span>Animated drift</span>
           <span class="theme-toggle" id="grad-animate-toggle" onclick="toggleGradientAnimate()" role="switch" aria-label="Animated drift"></span>
         </div>
-        <p class="theme-hint">Slow ~40 s orbit — colors drift gently like a lava lamp. Off by default.</p>
       </section>
 
       <!-- ======== TYPOGRAPHY ========
@@ -2369,25 +2392,25 @@
                  oninput="setLetterSpacing(this.value)">
           <span class="theme-slider-val" id="type-spacing-val">0</span>
         </div>
-        <div class="theme-presets three" id="weight-presets" style="margin-top: 12px;">
+        <div class="theme-presets three" id="weight-presets" style="margin-top: 5px;">
           <button class="preset-card" data-weight="300" onclick="setFontWeight('300')">
-            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:300;font-size:18px;color:var(--text-2);">Aa</div>
+            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:300;font-size:13px;color:var(--text-2);">Aa</div>
             <span class="preset-label">Light</span>
           </button>
           <button class="preset-card" data-weight="400" onclick="setFontWeight('400')">
-            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:400;font-size:18px;color:var(--text-2);">Aa</div>
+            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:400;font-size:13px;color:var(--text-2);">Aa</div>
             <span class="preset-label">Regular</span>
           </button>
           <button class="preset-card" data-weight="500" onclick="setFontWeight('500')">
-            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:500;font-size:18px;color:var(--text-2);">Aa</div>
+            <div class="preset-preview" style="display:flex;align-items:center;justify-content:center;font-weight:500;font-size:13px;color:var(--text-2);">Aa</div>
             <span class="preset-label">Medium</span>
           </button>
         </div>
-        <div class="theme-toggle-row" style="margin-top: 12px;">
-          <span>Dyslexia-friendly</span>
-          <span class="theme-toggle" id="type-dyslexia-toggle" onclick="toggleDyslexia()" role="switch" aria-label="Dyslexia-friendly font"></span>
-        </div>
-        <p class="theme-hint">Swaps to Verdana — wide x-height and distinct letterforms. Easier to read for many dyslexic users.</p>
+        <!-- Dyslexia-friendly + High-contrast toggles moved out to the
+             left sidebar Settings cluster. They're global preferences
+             rather than visual theme knobs, so grouping them with the
+             rest of the app-level settings (density, hide hints) reads
+             more naturally and frees vertical space in the themebar. -->
       </section>
 
       <!-- ======== GLASS ========
@@ -2415,7 +2438,6 @@
             <span class="preset-label">Heavy</span>
           </button>
         </div>
-        <p class="theme-hint">Frosts the cards so whatever's behind bleeds through. Works best with a gradient on.</p>
       </section>
 
       <!-- ======== VIEWS (v1.4) ========
@@ -2427,22 +2449,8 @@
       <section class="theme-section">
         <h3>Views</h3>
         <div class="view-grid" id="view-grid"></div>
-        <button class="view-save-btn" onclick="saveCurrentView()">+ Save current view</button>
-        <p class="theme-hint">One-click swap of every Themes setting. Great for switching between "reading," "demo," and "get out of my way."</p>
       </section>
 
-      <!-- ======== ACCESSIBILITY (v1.4) ========
-           High-contrast toggle. When on: gradient + glass off,
-           borders thicken, hint text darkens. Focus-ring pass is
-           global (no UI needed, handled by :focus-visible CSS). -->
-      <section class="theme-section">
-        <h3>Accessibility</h3>
-        <div class="theme-toggle-row">
-          <span>High contrast</span>
-          <span class="theme-toggle" id="contrast-toggle" onclick="toggleHighContrast()" role="switch" aria-label="High contrast mode"></span>
-        </div>
-        <p class="theme-hint">Turns off gradient and glass, thickens borders, boosts text contrast. Pairs with the Dyslexia-friendly font for max readability.</p>
-      </section>
     </div>
   </aside>
 
@@ -2780,7 +2788,7 @@
     accentHex: '#8A5CF6',     // canonical source of truth, any color goes
     density: 'comfortable',   // compact | comfortable | spacious
     hideHint: false,          // hide the "Enter to load · Ctrl+V..." hint line
-    themeMode: 'dark',        // 'dark' | 'light' — right themebar Mode section
+    themeMode: 'dark',        // 'dark' | 'light' | 'system' — title-bar .tb-mode cycles
     // ===== Themebar personalization =====
     bgPreset:      '',        // '' (default) | void | graphite | midnight | slate | cream | snow
     bgNoise:       false,     // subtle film-grain overlay
@@ -2938,8 +2946,12 @@
       // values always reflect what the user is looking at.
       const density = document.getElementById('set-density');
       const hideHint = document.getElementById('set-hide-hint');
+      const dys = document.getElementById('set-dyslexia');
+      const hc = document.getElementById('set-high-contrast');
       if (density) density.value = SETTINGS.density;
       if (hideHint) hideHint.checked = !!SETTINGS.hideHint;
+      if (dys) dys.checked = !!SETTINGS.dyslexiaFont;
+      if (hc) hc.checked = !!SETTINGS.highContrast;
       renderSwatches();
     }
   }
@@ -2961,7 +2973,6 @@
     const btn = document.getElementById('themebar-toggle');
     if (btn) btn.classList.toggle('active', !!on);
     if (on) {
-      _syncThemeModeCards();
       // Re-sync Background / Gradient UI every time the panel
       // opens so stored values always match what the user sees.
       if (typeof applyThemebar === 'function') applyThemebar();
@@ -2981,15 +2992,9 @@
     _themeTxTimer = setTimeout(() => h.classList.remove('theme-transitioning'), 420);
   }
 
-  function _syncThemeModeCards() {
-    const mode = SETTINGS.themeMode || 'dark';
-    const d = document.getElementById('mode-dark');
-    const l = document.getElementById('mode-light');
-    const s = document.getElementById('mode-system');
-    if (d) d.classList.toggle('active', mode === 'dark');
-    if (l) l.classList.toggle('active', mode === 'light');
-    if (s) s.classList.toggle('active', mode === 'system');
-  }
+  // _syncThemeModeCards() used to paint the Dark/Light/System picker
+  // in the themebar. That picker is gone -- the title-bar .tb-mode
+  // button + _syncTbModeIcon() cover theme-mode UI now.
 
   // Resolve a stored mode preference ('dark'|'light'|'system') down to
   // an effective theme ('dark'|'light'). 'system' delegates to the OS
@@ -3037,7 +3042,36 @@
     // OS-driven re-applies, those flow through applyThemeMode only).
     _flashThemeTransition();
     applyThemeMode(mode);
-    _syncThemeModeCards();
+    _syncTbModeIcon();
+  }
+
+  // Title-bar mode toggle: cycle dark → light → system → dark. Lives
+  // here (not in the themebar) so theme-mode is one click from anywhere
+  // in the app and doesn't compete with visual theme controls for
+  // sidebar real estate.
+  const _MODE_CYCLE = ['dark', 'light', 'system'];
+  function cycleThemeMode() {
+    const cur = SETTINGS.themeMode || 'dark';
+    const next = _MODE_CYCLE[(_MODE_CYCLE.indexOf(cur) + 1) % _MODE_CYCLE.length];
+    setThemeMode(next);
+  }
+
+  // SVG path swap for the title-bar mode button. Three glyphs:
+  //   dark   -> moon
+  //   light  -> sun
+  //   system -> monitor
+  // We re-paint the icon on every mode change AND on boot so the
+  // button always reflects the current mode.
+  const _MODE_ICONS = {
+    dark:   '<circle cx="12" cy="12" r="9" fill="none"/><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" fill="currentColor" stroke="none"/>',
+    light:  '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+    system: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  };
+  function _syncTbModeIcon() {
+    const svg = document.querySelector('#tb-mode .tb-mode-icon');
+    if (!svg) return;
+    const mode = SETTINGS.themeMode || 'dark';
+    svg.innerHTML = _MODE_ICONS[mode] || _MODE_ICONS.dark;
   }
 
   // -------------------------------------------------------------------
@@ -3157,8 +3191,10 @@
     if (sp)  sp.value = SETTINGS.letterSpacing;
     if (spV) spV.textContent = SETTINGS.letterSpacing === 0 ? '0' : '+' + SETTINGS.letterSpacing;
     _paintPresetGroup('weight-presets', 'weight', String(SETTINGS.fontWeight || '400'));
-    const t = document.getElementById('type-dyslexia-toggle');
-    if (t) t.classList.toggle('on', !!SETTINGS.dyslexiaFont);
+    // Dyslexia toggle moved to the left sidebar — it's a checkbox
+    // input now, so sync .checked instead of an 'on' class.
+    const t = document.getElementById('set-dyslexia');
+    if (t) t.checked = !!SETTINGS.dyslexiaFont;
   }
   function setFontScale(val) {
     SETTINGS.fontScale = +val;
@@ -3228,8 +3264,10 @@
     );
   }
   function _syncHighContrastUI() {
-    const t = document.getElementById('contrast-toggle');
-    if (t) t.classList.toggle('on', !!SETTINGS.highContrast);
+    // High-contrast toggle moved to the left sidebar — it's a checkbox
+    // input now, so sync .checked instead of an 'on' class.
+    const t = document.getElementById('set-high-contrast');
+    if (t) t.checked = !!SETTINGS.highContrast;
   }
   function toggleHighContrast() {
     SETTINGS.highContrast = !SETTINGS.highContrast;
@@ -3345,7 +3383,7 @@
     _syncTypographyUI();
     _syncGlassUI();
     _syncHighContrastUI();
-    _syncThemeModeCards();
+    _syncTbModeIcon();
     renderViews();
     toast(`Applied "${view.name}"`, 'ok');
   }
@@ -3437,6 +3475,15 @@
       }
       grid.appendChild(card);
     });
+    // Save-current-view "card" lives as the last grid slot so it
+    // shares the row with view tiles instead of taking its own row.
+    const saveCard = document.createElement('button');
+    saveCard.className = 'view-card view-card-save';
+    saveCard.type = 'button';
+    saveCard.setAttribute('aria-label', 'Save current view');
+    saveCard.onclick = saveCurrentView;
+    saveCard.innerHTML = '<div class="view-swatch view-swatch-save">+</div><span class="view-name">Save</span>';
+    grid.appendChild(saveCard);
   }
 
   // ----- Command palette (v1.4) -----
@@ -3683,6 +3730,7 @@
     _syncTypographyUI();
     _syncGlassUI();
     _syncHighContrastUI();
+    _syncTbModeIcon();
     renderViews();
   }
 
@@ -3707,6 +3755,21 @@
       saveSettings(SETTINGS);
       applyUISettings();
     };
+    // Dyslexia-friendly font + High contrast: a11y toggles relocated
+    // from the themebar to the sidebar. Both still use the same
+    // underlying SETTINGS + apply functions -- just a checkbox UI now.
+    const dys = document.getElementById('set-dyslexia');
+    if (dys) dys.onchange = () => {
+      SETTINGS.dyslexiaFont = dys.checked;
+      saveSettings(SETTINGS);
+      applyTypography();
+    };
+    const hc = document.getElementById('set-high-contrast');
+    if (hc) hc.onchange = () => {
+      SETTINGS.highContrast = hc.checked;
+      saveSettings(SETTINGS);
+      applyHighContrast();
+    };
   }
 
   function resetSettings() {
@@ -3718,7 +3781,7 @@
     applyUISettings();
     renderSwatches();
     applyThemeMode(SETTINGS.themeMode || 'dark');
-    _syncThemeModeCards();
+    _syncTbModeIcon();
     applyThemebar();
     toast('Settings reset', 'ok');
   }
@@ -3737,14 +3800,15 @@
   applyAccentHex(SETTINGS.accentHex);
   applyUISettings();
   applyThemeMode(SETTINGS.themeMode || 'dark');
-  // Themebar personalization (background/gradient/typography/glass) —
-  // apply the raw data-* attrs immediately so there's no flash of
-  // default theme. UI sync runs after DOM is parsed; elements don't
+  // Themebar personalization (background/gradient/typography/glass +
+  // a11y) — apply the raw data-* attrs immediately so there's no flash
+  // of default theme. UI sync runs after DOM is parsed; elements don't
   // exist yet here.
   applyBackground();
   applyGradient();
   applyTypography();
   applyGlass();
+  applyHighContrast();
 
   // ---------------------------------------------------------------------------
   // Format mode (video vs audio) -- show the right extras

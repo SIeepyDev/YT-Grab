@@ -2137,9 +2137,31 @@ def _launch_pywebview():
             _debug_log(f"reveal failed: {e}")
 
     try:
+        # Pin WebView2's user-data dir to %LOCALAPPDATA%\YTGrab\webview
+        # so localStorage (theme settings, saved views, etc.) persists
+        # reliably across restarts -- and survives renaming or moving
+        # the exe. Without an explicit path, WebView2 derives one from
+        # the process name, which drifts between `python server.py`
+        # and packaged YTGrab.exe builds and effectively amnesia-bombs
+        # users on their first packaged launch. private_mode=False is
+        # also required; private mode uses an in-memory storage profile
+        # that vanishes on exit regardless of storage_path.
+        storage_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+            "YTGrab", "webview"
+        )
+        try:
+            os.makedirs(storage_dir, exist_ok=True)
+        except Exception:
+            storage_dir = None  # fall back to pywebview default if FS denies us
         # Pass the callback positionally to webview.start() -- this is
         # how Luna does it (and works reliably across pywebview versions).
-        webview.start(_prep_and_show, debug=False, private_mode=False)
+        webview.start(
+            _prep_and_show,
+            debug=False,
+            private_mode=False,
+            storage_path=storage_dir,
+        )
     finally:
         os._exit(0)
 

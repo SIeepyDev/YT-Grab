@@ -1,0 +1,29 @@
+name: release-please
+
+# Every push to main: release-please opens or updates a single
+# living PR with the upcoming CHANGELOG.md, bumped manifest, and
+# bumped index.html version marker. When you merge that PR, it
+# tags the commit (vX.Y.Z) and publishes a GitHub Release with
+# the changelog as the body. That's the whole ship flow - no
+# local scripts, no typing.
+#
+# Version source of truth: .release-please-manifest.json.
+# Commit style: Conventional Commits (see CLAUDE.md).
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
