@@ -40,11 +40,9 @@ def _install_dir() -> Path:
 
 
 INSTALL_DIR = _install_dir()
-LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", "")).resolve()
 USERPROFILE = Path(os.environ.get("USERPROFILE", "")).resolve()
 APPDATA = Path(os.environ.get("APPDATA", "")).resolve()
 
-YTGRAB_DATA_DIR = LOCALAPPDATA / "YTGrab" if LOCALAPPDATA else None
 DESKTOP = USERPROFILE / "Desktop" if USERPROFILE else None
 START_MENU = (
     APPDATA / "Microsoft" / "Windows" / "Start Menu" / "Programs"
@@ -79,8 +77,12 @@ class UninstallerWorker:
             if self.export_first:
                 self._export_data()
             self._kill_process()
-            self._remove_appdata()
             self._remove_shortcuts()
+            # The install folder IS the "app data" folder in the
+            # bootstrapper-based install (everything lives at
+            # %LOCALAPPDATA%\Programs\YTGrab\), so a single self-delete
+            # of INSTALL_DIR wipes downloads/, previous_downloads/,
+            # debug.log, version.txt and the three .exes in one shot.
             self._schedule_self_delete()
         except Exception as exc:  # noqa: BLE001
             self.had_error = True
@@ -121,17 +123,6 @@ class UninstallerWorker:
         except Exception:  # noqa: BLE001
             pass
 
-    def _remove_appdata(self):
-        self.log("Removing app data ...")
-        if YTGRAB_DATA_DIR and YTGRAB_DATA_DIR.exists():
-            try:
-                shutil.rmtree(YTGRAB_DATA_DIR, ignore_errors=False)
-            except Exception as exc:  # noqa: BLE001
-                self.had_error = True
-                self.log(
-                    f"  FAILED ({exc}). Close YT Grab fully and retry."
-                )
-
     def _remove_shortcuts(self):
         self.log("Removing shortcuts ...")
         for lnk in SHORTCUTS:
@@ -144,18 +135,39 @@ class UninstallerWorker:
     def _schedule_self_delete(self):
         """Spawn a detached cmd that waits then wipes the install folder.
 
-        Classic Windows self-delete pattern -- the child cmd inherits no
-        handles to our process, so once we exit it can rmdir us.
+        Three things that bit us in the original implementation:
+
+        1. `timeout /t N` reads from stdin to detect Ctrl-C, and under
+           DETACHED_PROCESS there's no console so it fails immediately
+           with "Input redirection is not supported". Use a ping loop
+           instead -- ping does not touch stdin.
+        2. The child cmd inherits the PARENT's CWD by default, which
+           here is INSTALL_DIR. Windows refuses to rmdir a folder that
+           any process has as its CWD, so the rmdir silently failed.
+           Spawn the child with cwd=C:\\ (system root) so it doesn't
+           hold the install folder open.
+        3. Retry once after an extra beat -- occasionally the
+           uninstaller's own YTGrabUninstaller.exe handle takes a
+           moment to release after the process exits.
         """
         self.log("Scheduling install folder removal ...")
-        target = str(INSTALL_DIR)
+        target = str(INSTALL_DIR).rstrip("\\")
+        # ping -n 5 127.0.0.1 = ~4 second wait (first ping is instant,
+        # then 1s between each of the remaining 4). Plenty of time for
+        # this process to exit and release the file handles.
         cmd = (
-            f'timeout /t 3 /nobreak >nul & '
+            f'ping -n 5 127.0.0.1 >nul & '
+            f'rmdir /s /q "{target}" & '
+            f'ping -n 3 127.0.0.1 >nul & '
             f'rmdir /s /q "{target}"'
         )
+        # Root of the system drive (C:\ typically). Guaranteed to exist
+        # and not be our install folder.
+        safe_cwd = (os.environ.get("SystemDrive", "C:") + "\\")
         try:
             subprocess.Popen(
                 ["cmd", "/c", cmd],
+                cwd=safe_cwd,
                 creationflags=(
                     _no_window_flag()
                     | getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -325,11 +337,14 @@ class UninstallerApp:
         if export_target:
             self._set_status(
                 f"Done. Your data is at Desktop\\{export_target.name}\\. "
-                "Closing in 3s..."
+                "Closing..."
             )
         else:
-            self._set_status("Done. Closing in 3s...")
-        self.root.after(3000, self.root.destroy)
+            self._set_status("Done. Closing...")
+        # Close quickly -- the detached cmd's ping loop (~4s) handles
+        # the real wait before it wipes the folder, so we don't need
+        # the uninstaller window to linger.
+        self.root.after(800, self.root.destroy)
 
 
 # --- Entrypoint -------------------------------------------------------
