@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/SIeepyDev/yt-grab/compare/v1.7.1...v1.8.0) (2026-04-20)
+
+
+### Features
+
+* fix drag, dedupe explorer opens, in-app prompts, reliable uninstall ([f288c3d](https://github.com/SIeepyDev/yt-grab/commit/f288c3ddc6705c37f7719eed50dec79f46eabce0))
+
 ## [1.7.1](https://github.com/SIeepyDev/yt-grab/compare/v1.7.0...v1.7.1) (2026-04-20)
 
 
