@@ -2243,6 +2243,8 @@
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
+        <button class="settings-reset" onclick="importExport()" style="margin-top: 14px;">Import exported data...</button>
+        <div class="about-line" style="margin-top: 4px; font-size: 10px">Pick a <code style="font-size: 10px">YTGrab-export-*</code> folder the uninstaller left on your Desktop. Downloads, Previous, and history merge in; nothing is overwritten.</div>
         <button class="settings-reset" onclick="resetSettings()" style="margin-top: 14px;">Reset all settings</button>
       </section>
 
@@ -3843,6 +3845,49 @@
       saveSettings(SETTINGS);
       applyHighContrast();
     };
+  }
+
+  // Import a YTGrab-export-* folder (the one the uninstaller writes to
+  // Desktop when you tick "Export my data" before uninstalling).
+  // Native folder picker via the exposed pywebview API, merge via the
+  // /api/import_data endpoint. Merge strategy is add-only: existing
+  // files and history entries are never overwritten.
+  async function importExport() {
+    if (!window.pywebview || !window.pywebview.api ||
+        !window.pywebview.api._tb_pick_import_folder) {
+      toast('Import only works in the desktop app', 'err');
+      return;
+    }
+    let path;
+    try {
+      path = await window.pywebview.api._tb_pick_import_folder();
+    } catch (e) {
+      toast('Folder picker failed', 'err');
+      return;
+    }
+    if (!path) return;   // user cancelled
+    toast('Importing...', 'ok');
+    const r = await api('POST', '/api/import_data', { path });
+    if (!r.ok) {
+      toast('Import failed: ' + (r.error || 'unknown'), 'err');
+      return;
+    }
+    const added =
+      (r.downloads_added || 0) + (r.previous_added || 0) +
+      (r.history_added  || 0) + (r.activity_added || 0);
+    const skipped =
+      (r.downloads_skipped || 0) + (r.previous_skipped || 0) +
+      (r.history_skipped   || 0) + (r.activity_skipped  || 0);
+    toast(
+      `Imported: ${r.downloads_added} downloads, ` +
+      `${r.previous_added} previous, ${r.history_added} history, ` +
+      `${r.activity_added} activity` +
+      (skipped ? ` (${skipped} skipped — already here)` : ''),
+      'ok'
+    );
+    // Refresh both panels so the imported entries appear immediately.
+    try { await loadHistory(); } catch (e) {}
+    try { await loadActivity(); } catch (e) {}
   }
 
   function resetSettings() {

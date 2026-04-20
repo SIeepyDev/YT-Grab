@@ -21,6 +21,7 @@ State:
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -1881,6 +1882,129 @@ def api_open_previous_folder():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/import_data", methods=["POST"])
+def api_import_data():
+    """Import a YTGrab-export-* folder produced by the uninstaller's
+    "Export my data to Desktop" step. Merges downloads/, previous_
+    downloads/, history.json, and activity.json into the current
+    install.
+
+    Merge strategy: NEVER overwrite. Per-video folders that already
+    exist on disk are skipped (the user's current copy wins). JSON
+    entries are deduped by job_id so re-importing the same export is
+    a no-op.
+
+    Body: { "path": "<folder>" }
+    Returns:  { "ok": True, "downloads_added": n, ... } with counts
+    for each bucket so the frontend can show a real toast.
+    """
+    data = request.get_json(silent=True) or {}
+    src_raw = (data.get("path") or "").strip()
+    if not src_raw:
+        return jsonify({"ok": False, "error": "no path provided"}), 400
+    src = Path(src_raw)
+    if not src.is_dir():
+        return jsonify({"ok": False, "error": "not a folder"}), 400
+
+    # Safety: don't import from the running install (would be a no-op
+    # at best, data-hazard at worst if shutil.copytree follows weird
+    # junction points).
+    try:
+        if src.resolve() == BASE_DIR.resolve():
+            return jsonify({
+                "ok": False,
+                "error": "can't import from the app's own folder",
+            }), 400
+    except Exception:
+        pass
+
+    # Sanity check the shape before we do any work.
+    has_anything = (
+        (src / "downloads").is_dir()
+        or (src / "previous_downloads").is_dir()
+        or (src / "history.json").is_file()
+        or (src / "activity.json").is_file()
+    )
+    if not has_anything:
+        return jsonify({
+            "ok": False,
+            "error": "folder doesn't look like a YT Grab export "
+                     "(no downloads/, previous_downloads/, "
+                     "history.json, or activity.json)",
+        }), 400
+
+    result = {
+        "ok": True,
+        "downloads_added": 0, "downloads_skipped": 0,
+        "previous_added":  0, "previous_skipped":  0,
+        "history_added":   0, "history_skipped":   0,
+        "activity_added":  0, "activity_skipped":  0,
+    }
+
+    # Per-video folders: copy subdirectories that don't already exist.
+    for folder_name, added_key, skipped_key, dst_base in (
+        ("downloads",          "downloads_added", "downloads_skipped", DOWNLOADS_DIR),
+        ("previous_downloads", "previous_added",  "previous_skipped",  PREVIOUS_DIR),
+    ):
+        src_folder = src / folder_name
+        if not src_folder.is_dir():
+            continue
+        dst_base.mkdir(exist_ok=True)
+        for child in src_folder.iterdir():
+            if not child.is_dir():
+                continue
+            dst = dst_base / child.name
+            if dst.exists():
+                result[skipped_key] += 1
+                continue
+            try:
+                shutil.copytree(child, dst)
+                result[added_key] += 1
+            except Exception as e:
+                print(f"[import] copy failed for {child.name}: {e}",
+                      file=sys.stderr)
+
+    # history.json + activity.json: merge, dedupe by job_id.
+    for fname, loader, saver, added_key, skipped_key in (
+        ("history.json",  _load_history,  _save_history,
+         "history_added",  "history_skipped"),
+        ("activity.json", _load_activity, _save_activity,
+         "activity_added", "activity_skipped"),
+    ):
+        src_file = src / fname
+        if not src_file.is_file():
+            continue
+        try:
+            with open(src_file, "r", encoding="utf-8") as f:
+                incoming = json.load(f)
+            if not isinstance(incoming, list):
+                continue
+        except Exception as e:
+            print(f"[import] couldn't read {fname}: {e}",
+                  file=sys.stderr)
+            continue
+
+        current = loader()
+        existing_ids = {
+            e.get("job_id") for e in current if isinstance(e, dict)
+        }
+        merged = list(current)
+        for entry in incoming:
+            if not isinstance(entry, dict):
+                continue
+            jid = entry.get("job_id")
+            if jid and jid in existing_ids:
+                result[skipped_key] += 1
+                continue
+            merged.append(entry)
+            if jid:
+                existing_ids.add(jid)
+            result[added_key] += 1
+        saver(merged)
+
+    return jsonify(result)
+
+
 @app.route("/api/open_folder", methods=["POST"])
 def api_open_folder():
     """Reveal a file in Explorer, or open a folder. Reuses an existing
@@ -2338,7 +2462,41 @@ def _launch_pywebview():
         except Exception as e:
             _debug_log(f"_tb_drag failed: {e}")
 
-    window.expose(_tb_minimize, _tb_maximize_toggle, _tb_close, _tb_drag)
+    def _tb_pick_import_folder():
+        """Native folder-picker for the Import-data flow. Returns the
+        absolute path string, or None if the user cancelled. Default
+        starting location is the Desktop, since that's where the
+        uninstaller writes its exports.
+        """
+        try:
+            import webview as _webview
+            start_dir = ""
+            try:
+                up = os.environ.get("USERPROFILE", "")
+                if up:
+                    desk = Path(up) / "Desktop"
+                    if desk.is_dir():
+                        start_dir = str(desk)
+            except Exception:
+                pass
+            result = window.create_file_dialog(
+                _webview.FOLDER_DIALOG,
+                directory=start_dir,
+                allow_multiple=False,
+            )
+            if not result:
+                return None
+            if isinstance(result, (list, tuple)):
+                return result[0] if result else None
+            return str(result)
+        except Exception as e:
+            _debug_log(f"pick_import_folder failed: {e}")
+            return None
+
+    window.expose(
+        _tb_minimize, _tb_maximize_toggle, _tb_close, _tb_drag,
+        _tb_pick_import_folder,
+    )
 
     def _debug_log(msg):
         """Write a diagnostic line to debug.log next to server.py so we
