@@ -27,7 +27,7 @@ or:
 [CmdletBinding()]
 param(
     [string]$Owner = "SIeepyDev",
-    [string]$Repo  = "YTGrab",
+    [string]$Repo  = "YT-Grab",
     [switch]$Draft,
     [switch]$Prerelease,
     [switch]$Force
