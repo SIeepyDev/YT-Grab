@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/SIeepyDev/yt-grab/compare/v1.9.0...v1.10.0) (2026-04-20)
+
+
+### Features
+
+* polling-based drag + uninstaller polish + proper shortcuts ([5d294df](https://github.com/SIeepyDev/yt-grab/commit/5d294df2b09b2dccfdeaefa1667ce7f29a3300ce))
+
 ## [1.9.0](https://github.com/SIeepyDev/yt-grab/compare/v1.8.0...v1.9.0) (2026-04-20)
 
 
