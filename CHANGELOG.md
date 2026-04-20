@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/SIeepyDev/yt-grab/compare/v1.12.1...v1.13.0) (2026-04-20)
+
+
+### Features
+
+* import exported data + refreshed README + screenshots ([e2930b4](https://github.com/SIeepyDev/yt-grab/commit/e2930b4f3d22760ac0bc9ca1c9ff431ff743d3bc))
+
 ## [1.12.1](https://github.com/SIeepyDev/yt-grab/compare/v1.12.0...v1.12.1) (2026-04-20)
 
 
