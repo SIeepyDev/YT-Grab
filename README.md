@@ -4,9 +4,9 @@ A clean, local-first YouTube downloader for Windows. Native desktop window, prem
 
 ![status: beta](https://img.shields.io/badge/status-beta-orange)
 ![windows only](https://img.shields.io/badge/windows-only-blue)
-![license: MIT](https://img.shields.io/badge/license-MIT-green)
-[![latest release](https://img.shields.io/github/v/release/SIeepyDev/yt-grab?label=release&color=purple)](https://github.com/SIeepyDev/yt-grab/releases/latest)
-![release date](https://img.shields.io/github/release-date/SIeepyDev/yt-grab?color=blueviolet)
+![license: 0BSD](https://img.shields.io/badge/license-0BSD-green)
+[![latest release](https://img.shields.io/github/v/release/SIeepyDev/YT-Grab?label=release&color=purple)](https://github.com/SIeepyDev/YT-Grab/releases/latest)
+![release date](https://img.shields.io/github/release-date/SIeepyDev/YT-Grab?color=blueviolet)
 
 <p align="center">
   <img src="screenshots/hero.png" alt="YT Grab — three-column workspace with both sidebars open" width="900">
@@ -57,8 +57,8 @@ Left sidebar holds nav + the HSV accent-color picker. Themes (right sidebar) car
 Requires **Python 3.10+** on Windows.
 
 ```powershell
-git clone https://github.com/SIeepyDev/yt-grab.git
-cd yt-grab
+git clone https://github.com/SIeepyDev/YT-Grab.git
+cd YT-Grab
 .\launch.vbs
 ```
 
@@ -97,7 +97,7 @@ Windows 11's Smart App Control (SAC) blocks unsigned PyInstaller binaries on som
 | `build.bat` + `build_icon.py` | Build pipeline for the .exe. |
 | `package.bat` | Wraps exe + source fallback into a shippable zip. |
 | `clean.bat` | Factory reset — wipes venv, dist, bin, downloads, history. |
-| `backfill_tags.bat` / `backfill_tags.ps1` | One-time retroactive tagger — walks `git log`, tags every `vX.X:` commit, pushes. Double-click the `.bat`. |
+| `release.bat` / `release.ps1` | After `build.bat`, uploads the three `.exe` artifacts to the current GitHub Release. Requires `GH_PAT`. |
 | `.github/workflows/release-please.yml` | Parses Conventional Commits on push to `main`, maintains a living release PR with the next version + changelog. Merge the PR → tag + GitHub Release land automatically. |
 | `.release-please-manifest.json` | Single source of truth for the current version. Auto-bumped; the `<!-- x-release-please-version -->` marker in `index.html` stays in sync. |
 | `downloads/` | User-facing output. Per-video folders with the main file + optional sidecars. |
@@ -144,7 +144,7 @@ Shipping is automated by [release-please](https://github.com/googleapis/release-
 
 > Note: the commit format is enforced by convention, not tooling — release-please silently ignores commits that don't match, and those changes won't appear in the next changelog. Keep subjects ≤50 characters, imperative mood, no trailing period.
 
-First-time setup: double-click `backfill_tags.bat` once to retroactively tag every historical `vX.X:` commit and push them all at once. Those tags pre-populate the Releases page with the full project history before release-please takes over.
+After release-please publishes the Release, run `.\build.bat` then `.\release.bat` (requires `GH_PAT`) to attach `YTGrabSetup.exe`, `YTGrab.exe`, and `YTGrabUninstaller.exe` as downloadable assets.
 
 ## Privacy
 
@@ -161,12 +161,12 @@ First-time setup: double-click `backfill_tags.bat` once to retroactively tag eve
 
 ## License
 
-[MIT](LICENSE). Use it, fork it, ship it, steal ideas. Attribution appreciated but not required.
+Free to use. See [LICENSE](LICENSE) for the full notice.
 
 ## Author
 
-Built by [SleepyDev](https://github.com/SIeepyDev). Part of the Luna workspace tools family.
+Built by [SleepyDev](https://github.com/SIeepyDev).
 
 ## Changelog
 
-Full release notes live on [the Releases page](https://github.com/SIeepyDev/YTGrab/releases). See [`CHANGELOG.md`](CHANGELOG.md) for the machine-generated log.
+Full release notes live on [the Releases page](https://github.com/SIeepyDev/YT-Grab/releases). See [`CHANGELOG.md`](CHANGELOG.md) for the machine-generated log.
