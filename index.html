@@ -1781,6 +1781,40 @@
   #toast.err { border-color: var(--danger); color: var(--danger); }
   #toast.ok  { border-color: var(--ok); color: var(--ok); }
 
+  /* Update banner — shown when a newer release is live on GitHub.
+     Lives bottom-right so it doesn't collide with the center toast.
+     Persistent (no auto-dismiss); user closes it with the X or by
+     clicking Download. */
+  #update-banner {
+    position: fixed; right: 20px; bottom: 20px; z-index: 300;
+    display: flex; align-items: center; gap: 12px;
+    background: var(--bg-2); border: 1px solid var(--accent);
+    padding: 10px 12px 10px 16px; border-radius: 10px;
+    font-size: 12px; color: var(--text);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.55);
+    opacity: 0; transform: translateY(8px);
+    transition: opacity .2s ease, transform .2s ease;
+    pointer-events: none;
+  }
+  #update-banner.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  #update-banner .ub-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 8px var(--accent);
+  }
+  #update-banner a.ub-btn {
+    color: var(--accent-contrast); text-decoration: none;
+    background: var(--accent); border: 1px solid var(--accent);
+    padding: 4px 10px; border-radius: 6px; font-weight: 600;
+    font-size: 11px; letter-spacing: 0.2px;
+  }
+  #update-banner a.ub-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  #update-banner button.ub-close {
+    background: transparent; border: none; color: var(--text-2);
+    font-size: 16px; line-height: 1; cursor: pointer;
+    padding: 2px 4px; margin-left: -4px;
+  }
+  #update-banner button.ub-close:hover { color: var(--text); }
+
   .hint { color: var(--text-4); font-size: 11px; margin-top: 8px; font-style: italic; }
   .kbd {
     display: inline-block; padding: 1px 5px; background: var(--bg-3);
@@ -2242,7 +2276,7 @@
         <div class="about-line"><strong style="color: var(--text-2)">YT Grab</strong> v1.14.0 <!-- x-release-please-version --></div>
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
-        <a class="about-link" href="https://github.com/SIeepyDev/yt-grab" target="_blank" rel="noopener">View source on GitHub</a>
+        <a class="about-link" href="https://github.com/SIeepyDev/YT-Grab" target="_blank" rel="noopener">View source on GitHub</a>
         <button class="settings-reset" onclick="importExport()" style="margin-top: 14px;">Import exported data...</button>
         <div class="about-line" style="margin-top: 4px; font-size: 10px">Pick a <code style="font-size: 10px">YTGrab-export-*</code> folder the uninstaller left on your Desktop. Downloads, Previous, and history merge in; nothing is overwritten.</div>
         <button class="settings-reset" onclick="resetSettings()" style="margin-top: 14px;">Reset all settings</button>
@@ -2767,6 +2801,15 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- Update banner: hidden until the checkForUpdate() IIFE at the end
+       of this script confirms a newer GitHub release is live. -->
+  <div id="update-banner" role="status" aria-live="polite">
+    <span class="ub-dot" aria-hidden="true"></span>
+    <span>New version <span id="ub-ver">v?</span> available</span>
+    <a id="ub-link" class="ub-btn" href="https://github.com/SIeepyDev/YT-Grab/releases/latest" target="_blank" rel="noopener">Download</a>
+    <button class="ub-close" id="ub-close" title="Dismiss" aria-label="Dismiss">&times;</button>
+  </div>
 
 <script>
   // ---------------------------------------------------------------------------
@@ -3890,8 +3933,9 @@
     try { await loadActivity(); } catch (e) {}
   }
 
-  function resetSettings() {
-    if (!confirm('Reset all settings to defaults?')) return;
+  async function resetSettings() {
+    if (!await appConfirm('Reset all settings?',
+        'Every dial goes back to defaults: accent, theme, background, gradient, typography, glass, and saved views.')) return;
     SETTINGS = { ...DEFAULT_SETTINGS };
     saveSettings(SETTINGS);
     applyAccentHex(SETTINGS.accentHex);
@@ -4617,7 +4661,7 @@
   }
 
   async function clearHistory() {
-    if (!confirm('Clear history AND send every downloaded file to the Recycle Bin?\n\nThe files will be recoverable from the Recycle Bin. Ctrl+Z also restores the history entries. Entries will also be kept in Previous Downloads as a log.')) return;
+    if (!await appConfirm('Clear history?', 'Every downloaded file goes to the Recycle Bin. Ctrl+Z restores the history entries. Files stay in Previous Downloads as a log.')) return;
     const r = await api('POST', '/api/history/clear');
     if (!r.ok) { toast('Could not clear', 'err'); return; }
     const n = r.count || 0;
@@ -4703,7 +4747,7 @@
   }
 
   async function clearActivity() {
-    if (!confirm('Clear the entire Previous Downloads log? Files were already deleted -- this just clears the log itself.')) return;
+    if (!await appConfirm('Clear the Previous Downloads log?', 'Files were already deleted — this only clears the log itself.')) return;
     const r = await api('POST', '/api/activity/clear');
     if (!r.ok) { toast('Could not clear', 'err'); return; }
     toast('Previous Downloads cleared', 'ok');
@@ -5163,14 +5207,18 @@
   // instead of stuffing everything into the input field.
   const _urlInput = document.getElementById('url-input');
   if (_urlInput) {
-    _urlInput.addEventListener('paste', (e) => {
+    _urlInput.addEventListener('paste', async (e) => {
       const text = (e.clipboardData || window.clipboardData).getData('text') || '';
       const urls = extractYoutubeUrls(text);
       if (urls.length < 2) return;  // single URL -> default paste behavior
       e.preventDefault();
-      if (urls.length > 5 && !confirm(
-            `Queue ${urls.length} downloads?\n\nUses current format/quality selections.`
-          )) return;
+      if (urls.length > 5) {
+        const ok = await appConfirm(
+          `Queue ${urls.length} downloads?`,
+          'Uses current format / quality selections.'
+        );
+        if (!ok) return;
+      }
       _urlInput.value = '';
       queueBatchDownload(urls);
     });
@@ -5489,6 +5537,70 @@
       openShortcuts();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Update check — notify-only. Hits the public GitHub releases API once
+  // on launch, compares the latest tag to the version baked into the
+  // about-line (kept current by release-please's x-release-please-version
+  // marker). If GitHub is newer, surfaces the update banner with a link
+  // to the releases page. Fully silent on network failure, offline, or
+  // rate-limit -- we never toast an error for this.
+  // ---------------------------------------------------------------------------
+  function _isNewerVersion(latest, current) {
+    const a = String(latest).split('.').map(n => parseInt(n, 10) || 0);
+    const b = String(current).split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const x = a[i] || 0, y = b[i] || 0;
+      if (x > y) return true;
+      if (x < y) return false;
+    }
+    return false;
+  }
+
+  (async function checkForUpdate() {
+    try {
+      // Read the current version out of the Settings about-line. Using
+      // textContent + regex means we don't need to touch the marker
+      // itself -- release-please keeps it fresh on every ship.
+      let current = null;
+      const aboutLines = document.querySelectorAll('.about-line');
+      for (const el of aboutLines) {
+        const m = el.textContent.match(/v(\d+\.\d+\.\d+)/);
+        if (m) { current = m[1]; break; }
+      }
+      if (!current) return;
+
+      // 8-second hard timeout so a dead network doesn't leave the fetch
+      // promise dangling forever.
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 8000);
+      const r = await fetch('https://api.github.com/repos/SIeepyDev/YT-Grab/releases/latest', {
+        signal: ctrl.signal,
+        headers: { 'Accept': 'application/vnd.github+json' },
+        cache: 'no-cache'
+      });
+      clearTimeout(tm);
+      if (!r.ok) return;
+      const data = await r.json();
+      const tag = (data.tag_name || '').replace(/^v/, '');
+      if (!tag || !_isNewerVersion(tag, current)) return;
+
+      const banner = document.getElementById('update-banner');
+      const verEl  = document.getElementById('ub-ver');
+      const linkEl = document.getElementById('ub-link');
+      const closeBtn = document.getElementById('ub-close');
+      if (!banner || !verEl || !linkEl || !closeBtn) return;
+
+      verEl.textContent = 'v' + tag;
+      linkEl.href = data.html_url || 'https://github.com/SIeepyDev/YT-Grab/releases/latest';
+      closeBtn.addEventListener('click', () => banner.classList.remove('show'), { once: true });
+      // Dismiss on Download click too -- user is clearly aware now.
+      linkEl.addEventListener('click', () => banner.classList.remove('show'), { once: true });
+      banner.classList.add('show');
+    } catch (_) {
+      // Silent: offline, blocked, rate-limited -- no user-facing noise.
+    }
+  })();
 </script>
 </body>
 </html>
