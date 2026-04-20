@@ -145,15 +145,11 @@ REM Copies downloads\, previous_downloads\, history.json,
 REM activity.json to Desktop\YTGrab-export-YYYY-MM-DD_HHMMSS\
 REM ============================================================
 :export_data
-    REM Build a timestamped folder name: YTGrab-export-2026-04-19_214530
-    for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value 2^>nul ^| find "="') do set DT=%%I
-    if "%DT%"=="" (
-        REM Fallback if wmic unavailable on newer Windows
-        set DT=%DATE:/=-%_%TIME::=%
-        set DT=%DT: =0%
-    ) else (
-        set "DT=%DT:~0,4%-%DT:~4,2%-%DT:~6,2%_%DT:~8,6%"
-    )
+    REM Build a timestamped folder name: YTGrab-export-2026-04-19_214530.
+    REM Uses PowerShell because wmic is removed on Windows 11 24H2+ and
+    REM the %DATE%/%TIME% locale formats are unreliable across machines.
+    for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmmss"') do set "DT=%%I"
+    if "%DT%"=="" set "DT=export"
     set "EXPORT_TARGET=%USERPROFILE%\Desktop\YTGrab-export-%DT%"
 
     echo.
