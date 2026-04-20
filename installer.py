@@ -138,6 +138,13 @@ class InstallerWorker:
         time.sleep(0.3)
         self.progress(1.0)
         self._launch_app()
+        # v1.8.1: clean up the downloaded YTGrabSetup.exe the user
+        # double-clicked from their Downloads folder, since we just
+        # stashed a canonical copy inside the install folder via
+        # _self_copy_into_install_dir(). Without this cleanup the user
+        # ends up with two identical setup .exes -- theirs in
+        # Downloads, ours in the install folder.
+        self._schedule_original_setup_delete()
 
     # -- helpers ------------------------------------------------------
 
@@ -265,6 +272,58 @@ class InstallerWorker:
             capture_output=True, text=True, timeout=15,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+
+    def _schedule_original_setup_delete(self):
+        """Queue a deletion of the user-downloaded YTGrabSetup.exe --
+        i.e. the copy the user double-clicked from their Downloads
+        folder, NOT the canonical copy we just wrote to the install
+        directory.
+
+        We can't delete our own running .exe, so we spawn a detached
+        hidden PowerShell process that waits a few seconds for us to
+        exit, then removes the original file. Same pattern as the
+        uninstaller's self-delete.
+        """
+        if not getattr(sys, "frozen", False):
+            return  # running from source -- nothing to clean up
+        try:
+            me = Path(sys.executable).resolve()
+        except Exception:
+            return
+        installed_copy = (INSTALL_DIR / SETUP_EXE_NAME).resolve()
+        if me == installed_copy:
+            # Being run from inside the install folder (the shortcut
+            # path). Leave it alone -- that IS the canonical copy.
+            return
+
+        target_ps = str(me).replace("'", "''")
+        ps_script = (
+            "$ErrorActionPreference = 'SilentlyContinue'; "
+            f"$t = '{target_ps}'; "
+            "Start-Sleep -Seconds 3; "
+            "for ($i = 1; $i -le 6; $i++) { "
+            "  Remove-Item -Path $t -Force -ErrorAction SilentlyContinue; "
+            "  if (-not (Test-Path $t)) { break } "
+            "  Start-Sleep -Milliseconds 700 "
+            "}"
+        )
+        try:
+            subprocess.Popen(
+                [
+                    "powershell", "-NoProfile", "-NonInteractive",
+                    "-WindowStyle", "Hidden",
+                    "-ExecutionPolicy", "Bypass",
+                    "-Command", ps_script,
+                ],
+                cwd=(os.environ.get("SystemDrive", "C:") + "\\"),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
 
     def _launch_app(self):
         app = INSTALL_DIR / APP_EXE_NAME

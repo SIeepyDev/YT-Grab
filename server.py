@@ -1684,7 +1684,16 @@ def _open_in_existing_explorer_as_tab(folder_path):
     """If any Explorer window is open on Win11, focus it and add a new
     tab pointing at folder_path via keyboard automation. Returns True
     if a tab was sent. Best-effort: saves + restores the user's
-    clipboard around the paste. Win10 is skipped (no tab support)."""
+    clipboard around the paste. Win10 is skipped (no tab support).
+
+    v1.8.1 notes: the v1.7.x timings (Ctrl+T @ 180ms, Ctrl+L @ 220ms)
+    were too aggressive -- on a lightly-loaded system the Ctrl+T would
+    fire before Explorer had settled from the activation, and the
+    subsequent Ctrl+L would land on the previous tab's address bar
+    instead of the newly-created tab's. The result was hijacking the
+    current tab to the pasted path AND spawning a new (empty) tab.
+    Remedy: bump the initial settle to 350ms and the post-Ctrl+T wait
+    to 450ms so the new tab is definitively focused before we type."""
     if not _is_win11():
         return False
     if not sys.platform.startswith("win"):
@@ -1703,22 +1712,34 @@ def _open_in_existing_explorer_as_tab(folder_path):
     VK_T       = 0x54
     VK_L       = 0x4C
     VK_V       = 0x56
+    VK_MENU    = 0x12
 
     # Stash and later restore the user's clipboard so we don't clobber
     # whatever they had copied.
     saved_clip = _clipboard_get_text()
     try:
+        # Double-unlock: AllowSetForegroundWindow + Alt-keystroke so the
+        # subsequent activation sticks even though we're sending input
+        # FROM a background app holding focus.
+        try:
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)
+            ctypes.windll.user32.keybd_event(VK_MENU, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(VK_MENU, 0, 0x0002, 0)
+        except Exception:
+            pass
         _activate_explorer_hwnd(hwnd, center=False)
-        time.sleep(0.18)
+        # Longer settle -- lets Explorer finish activating before we
+        # start sending keystrokes, which was the race window in v1.7.x.
+        time.sleep(0.35)
         _send_key_combo([VK_CONTROL], VK_T)      # Ctrl+T -- new tab
-        time.sleep(0.22)
+        time.sleep(0.45)                         # new tab fully focused
         _send_key_combo([VK_CONTROL], VK_L)      # Ctrl+L -- focus address bar
-        time.sleep(0.10)
+        time.sleep(0.18)
         if not _clipboard_set_text(str(folder_path)):
             return False
-        time.sleep(0.05)
+        time.sleep(0.08)
         _send_key_combo([VK_CONTROL], VK_V)      # Ctrl+V -- paste path
-        time.sleep(0.05)
+        time.sleep(0.10)
         _send_key_combo([], VK_RETURN)           # Enter -- navigate
         return True
     except Exception:
@@ -1727,7 +1748,7 @@ def _open_in_existing_explorer_as_tab(folder_path):
         # Restore clipboard after Explorer's had a beat to read it.
         if saved_clip is not None:
             def _restore():
-                time.sleep(0.5)
+                time.sleep(0.6)
                 _clipboard_set_text(saved_clip)
             threading.Thread(target=_restore, daemon=True).start()
 
@@ -1769,13 +1790,15 @@ def api_open_previous_folder():
             # Prefer reusing a window already at this exact path.
             if _focus_existing_explorer(target_path):
                 return jsonify({"ok": True, "reused": True})
-            # v1.7.2: no tab-injection path. Previously we tried to add
-            # a new tab to any open Explorer window via keyboard macro
-            # (Ctrl+T / Ctrl+L / paste / Enter); timing glitches caused
-            # it to occasionally hijack the frontmost tab (navigating it
-            # to 'This PC') AND spawn a second window, which is the
-            # exact bug this route is shipping to fix. Simple rule now:
-            # reuse window already at this path, otherwise new window.
+            # v1.8.1: if any OTHER Explorer window is open, add a new
+            # tab to it instead of spawning a second window. User's
+            # explicit ask: "if file explorer is open just make them as
+            # tabs so theres only ever one file explorer open." The
+            # earlier removal in v1.7.2 was a regression -- the timing
+            # glitches that caused tab-hijacking are addressed by the
+            # bumped delays in _open_in_existing_explorer_as_tab.
+            if _open_in_existing_explorer_as_tab(target_path):
+                return jsonify({"ok": True, "tab": True})
             try:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
@@ -1821,11 +1844,15 @@ def api_open_folder():
             if _focus_existing_explorer(target_folder):
                 return jsonify({"ok": True, "reused": True})
 
-            # v1.7.2: no tab-injection path. See api_open_previous_folder
-            # for the full story -- keyboard-macro Ctrl+T timing was
-            # duplicating windows and occasionally hijacking the wrong
-            # tab to 'This PC'. Rule is now: reuse if already at path,
-            # otherwise new window.
+            # v1.8.1: if ANY other Explorer is open (e.g. user has
+            # another folder open), pile a new tab onto that window
+            # instead of spawning a second top-level window. Only when
+            # no Explorer at all is open do we spawn a fresh window.
+            # File-reveal case (/select) is kept as a spawn because tab
+            # navigation can't express the selection.
+            if not target_path.is_file():
+                if _open_in_existing_explorer_as_tab(target_folder):
+                    return jsonify({"ok": True, "tab": True})
 
             # No existing window at that path. Spawn new, using the
             # focus-stealing workaround stack so Explorer comes forward
@@ -2166,29 +2193,47 @@ def _launch_pywebview():
         custom title bar. WebView2 honors -webkit-app-region: drag
         inconsistently -- specifically, once a frameless pywebview
         window has been restored from maximized, the drag region goes
-        dead until the next maximize/restore cycle. Rather than fight
-        the WebView2 quirk, we hand the drag off to Windows directly.
+        dead until the next maximize/restore cycle.
 
-        Mechanism: the user clicked INSIDE the WebView2 child (which
-        is why a JS mousedown fired), so the child has captured the
-        mouse. ReleaseCapture() clears that. Then SendMessageW with
-        WM_NCLBUTTONDOWN + HTCAPTION tells the top-level window 'treat
-        this mousedown as if it happened on the non-client caption
-        area' -- Windows takes over from there: aero-snap, multi-
-        monitor, edge-snap and all. We return immediately; the
-        message loop pumps the drag synchronously on the UI thread.
-        """
+        v1.8.1 rewrite: the previous SendMessageW(WM_NCLBUTTONDOWN)
+        approach failed silently after a restore cycle. Two reasons:
+          1. SendMessage from a worker thread blocks until the target
+             window's UI thread processes it, which races against
+             WebView2's own mouse capture state.
+          2. WM_NCLBUTTONDOWN requires the mouse to still be DOWN on
+             the caption area at message-process time -- by the time
+             our async JS->Python bridge call completes, that state
+             may have decayed.
+
+        Fix: PostMessageW(WM_SYSCOMMAND, SC_MOVE | 0x0002). The
+        0x0002 low-bit on the wParam tells Windows "this move is
+        being driven by the mouse, enter the standard drag loop."
+        Equivalent to the user picking "Move" from the system menu
+        and then moving the mouse. PostMessage queues it -- no
+        thread-sync deadlock -- and Windows acquires its own capture
+        regardless of WebView2's prior capture state. Aero-snap,
+        multi-monitor, edge-snap all still work."""
         try:
             import ctypes
             hwnd = _find_my_window_hwnd(require_visible=True)
             if not hwnd:
+                _debug_log("_tb_drag: no hwnd found")
                 return
-            WM_NCLBUTTONDOWN = 0x00A1
-            HTCAPTION = 2
-            ctypes.windll.user32.ReleaseCapture()
-            ctypes.windll.user32.SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)
-        except Exception:
-            pass
+            WM_SYSCOMMAND = 0x0112
+            SC_MOVE = 0xF010
+            MOUSEMOVE_FLAG = 0x0002  # tells Windows to use mouse, not keyboard
+            # ReleaseCapture is best-effort -- only works on the calling
+            # thread's captured window, but harmless to call cross-thread.
+            try:
+                ctypes.windll.user32.ReleaseCapture()
+            except Exception:
+                pass
+            ok = ctypes.windll.user32.PostMessageW(
+                hwnd, WM_SYSCOMMAND, SC_MOVE | MOUSEMOVE_FLAG, 0
+            )
+            _debug_log(f"_tb_drag posted SC_MOVE to hwnd={hwnd} ok={ok}")
+        except Exception as e:
+            _debug_log(f"_tb_drag failed: {e}")
 
     window.expose(_tb_minimize, _tb_maximize_toggle, _tb_close, _tb_drag)
 

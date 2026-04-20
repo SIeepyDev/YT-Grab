@@ -3,8 +3,9 @@ YT Grab - Standalone Uninstaller
 =================================
 
 A tkinter GUI uninstaller. Single big button -- click and it does
-everything: optional export, kill app, wipe app data, remove shortcuts,
-self-delete the install folder.
+everything: optional export, kill app, close Explorer on install folder,
+wipe app data, remove shortcuts, wipe webview user-data, self-delete the
+install folder.
 
 Build with PyInstaller via Uninstaller.spec ->
     dist\\YTGrabUninstaller.exe
@@ -22,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import ttk, messagebox
 
 
 # --- Paths ------------------------------------------------------------
@@ -42,6 +43,7 @@ def _install_dir() -> Path:
 INSTALL_DIR = _install_dir()
 USERPROFILE = Path(os.environ.get("USERPROFILE", "")).resolve()
 APPDATA = Path(os.environ.get("APPDATA", "")).resolve()
+LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", "")).resolve()
 TEMP_DIR = Path(os.environ.get("TEMP", r"C:\Windows\Temp"))
 
 DESKTOP = USERPROFILE / "Desktop" if USERPROFILE else None
@@ -50,6 +52,11 @@ START_MENU = (
     if APPDATA
     else None
 )
+
+# Additional app-data locations the app creates at runtime. Wiping
+# these is part of "remove everything" so no stale WebView2 cache,
+# localStorage, or tmp extracts survive the uninstall.
+WEBVIEW_DIR = LOCALAPPDATA / "YTGrab" if LOCALAPPDATA.name else None
 
 SHORTCUTS = []
 if DESKTOP:
@@ -63,32 +70,59 @@ if START_MENU:
 
 # --- Worker logic -----------------------------------------------------
 
+# Worker phases -> progress fractions. Keeps the progress bar monotonic
+# and gives each step a stable slice of the bar.
+P_STARTED  = 0.02
+P_EXPORT   = 0.25
+P_KILL     = 0.35
+P_CLOSE_EX = 0.55
+P_LINKS    = 0.65
+P_WEBVIEW  = 0.80
+P_SCHEDULE = 0.95
+P_DONE     = 1.00
+
+
 class UninstallerWorker:
     """Runs the actual uninstall steps off the UI thread."""
 
-    def __init__(self, log_callback, done_callback, export_first: bool):
-        self.log = log_callback
-        self.done = done_callback
+    def __init__(self, status_cb, progress_cb, done_cb, export_first: bool):
+        self.status = status_cb
+        self.progress = progress_cb
+        self.done = done_cb
         self.export_first = export_first
         self.export_target: Path | None = None
         self.had_error = False
 
     def run(self):
         try:
+            self.progress(P_STARTED)
             if self.export_first:
                 self._export_data()
+            self.progress(P_EXPORT)
+
             self._kill_process()
+            self.progress(P_KILL)
+
+            self._close_explorer_windows()
+            self.progress(P_CLOSE_EX)
+
             self._remove_shortcuts()
+            self.progress(P_LINKS)
+
+            self._wipe_webview_cache()
+            self.progress(P_WEBVIEW)
+
             # The install folder IS the "app data" folder in the
-            # bootstrapper-based install (everything lives at
-            # %LOCALAPPDATA%\Programs\YTGrab\), so a single self-delete
-            # of INSTALL_DIR wipes downloads/, previous_downloads/,
+            # bootstrapper-based install, so a single self-delete of
+            # INSTALL_DIR wipes downloads/, previous_downloads/,
             # debug.log, version.txt and the three .exes in one shot.
             self._schedule_self_delete()
+            self.progress(P_SCHEDULE)
         except Exception as exc:  # noqa: BLE001
             self.had_error = True
-            self.log(f"ERROR: {exc}")
+            self.status(f"Error: {exc}")
         finally:
+            self.progress(P_DONE)
             self.done(self.had_error, self.export_target)
 
     # -- steps ---------------------------------------------------------
@@ -96,24 +130,24 @@ class UninstallerWorker:
     def _export_data(self):
         ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         target = (DESKTOP or INSTALL_DIR) / f"YTGrab-export-{ts}"
-        self.log(f"Exporting your data to {target.name}/ ...")
+        self.status("Exporting your data to Desktop...")
         target.mkdir(parents=True, exist_ok=True)
         self.export_target = target
 
         for folder in ("downloads", "previous_downloads"):
             src = INSTALL_DIR / folder
             if src.is_dir():
-                self.log(f"  {folder}/")
+                self.status(f"Exporting {folder}/ ...")
                 shutil.copytree(src, target / folder, dirs_exist_ok=True)
 
         for fname in ("history.json", "activity.json"):
             src = INSTALL_DIR / fname
             if src.is_file():
-                self.log(f"  {fname}")
+                self.status(f"Exporting {fname} ...")
                 shutil.copy2(src, target / fname)
 
     def _kill_process(self):
-        self.log("Stopping YTGrab.exe ...")
+        self.status("Stopping YT Grab...")
         for image in ("YTGrab.exe",):
             try:
                 subprocess.run(
@@ -123,56 +157,20 @@ class UninstallerWorker:
                 )
             except Exception:  # noqa: BLE001
                 pass
-        time.sleep(1)
+        time.sleep(0.8)
 
-    def _remove_shortcuts(self):
-        self.log("Removing shortcuts ...")
-        for lnk in SHORTCUTS:
-            if lnk and lnk.exists():
-                try:
-                    lnk.unlink()
-                except Exception:  # noqa: BLE001
-                    pass
+    def _close_explorer_windows(self):
+        """Close any Explorer windows viewing the install folder.
 
-    def _schedule_self_delete(self):
-        """Spawn a detached batch that wipes the install folder.
-
-        What bit v1.7.1: File Explorer holds an open directory handle
-        on whatever folder it's displaying, and the user is guaranteed
-        to have Explorer open on the install folder because that's
-        how they launched the uninstaller in the first place. Windows
-        silently refuses rmdir on a directory any process has open, so
-        the v1.7.1 rmdir ran and did nothing.
-
-        This version writes a self-contained .bat to %TEMP% that:
-          1. Logs every step to %TEMP%\\ytgrab-uninst.log so we can
-             actually diagnose future failures.
-          2. Waits for this Python process to exit.
-          3. Asks any File Explorer windows viewing the install folder
-             (or a subfolder of it) to close, via the Shell.Application
-             COM object.
-          4. Kills any lingering YTGrab.exe / YTGrabUninstaller.exe.
-          5. Retries rmdir up to 10 times with 3s gaps -- handles still
-             pending from the closed Explorer windows clear on their
-             own schedule, so we poll.
-          6. Self-deletes the .bat.
-
-        Using a written-out .bat (instead of cmd /c "long string")
-        gives us control over line-by-line behavior and, critically,
-        lets us use delayed expansion for the retry counter.
+        Explorer holds an open handle on the directory it's showing,
+        which is what blocks rmdir. Doing this in-process via a single
+        hidden PowerShell call is cleaner than the v1.8.0 approach of
+        shelling out to cmd+ping+powershell (three processes, some of
+        which flashed a console on screen).
         """
-        self.log("Scheduling install folder removal ...")
-        target = str(INSTALL_DIR).rstrip("\\")
-        bat_path = TEMP_DIR / f"ytgrab-uninst-{os.getpid()}.bat"
-        log_path = TEMP_DIR / "ytgrab-uninst.log"
-
-        # PowerShell one-liner that walks every open Shell window and
-        # closes the ones whose LocationURL points at our install
-        # folder (or anything beneath it). Match is on the tail
-        # "Programs/YTGrab" or "Programs\YTGrab" -- specific enough
-        # that we don't hit unrelated windows, loose enough that it
-        # catches a user drilled into downloads/ or previous_downloads/.
-        ps_close = (
+        self.status("Releasing Explorer handles...")
+        ps_script = (
+            "$ErrorActionPreference = 'SilentlyContinue'; "
             "$s = New-Object -ComObject Shell.Application; "
             "foreach ($w in @($s.Windows())) { "
             "try { "
@@ -182,92 +180,141 @@ class UninstallerWorker:
             "} catch {} "
             "}"
         )
-
-        bat_lines = [
-            "@echo off",
-            "setlocal enabledelayedexpansion",
-            f'echo === YTGrab uninstall cleanup === > "{log_path}"',
-            f'echo Start: %DATE% %TIME%    >> "{log_path}"',
-            f'echo Target: {target}       >> "{log_path}"',
-            "",
-            "REM Wait for the uninstaller Python process to fully exit",
-            "REM so its own YTGrabUninstaller.exe file handle releases.",
-            "ping -n 4 127.0.0.1 >nul",
-            "",
-            "REM Close any File Explorer windows viewing the install",
-            "REM folder. Explorer holds an open handle on the directory",
-            "REM it's showing, which blocks rmdir -- this was the v1.7.1",
-            "REM silent-failure bug.",
-            f'echo Closing Explorer windows... >> "{log_path}"',
-            (
-                f'powershell -NoProfile -Command "{ps_close}" '
-                f'>> "{log_path}" 2>&1'
-            ),
-            "",
-            "REM Belt + suspenders -- kill anything still holding files.",
-            "REM taskkill returns nonzero when the process isn't running,",
-            "REM which is fine, so swallow both streams.",
-            'taskkill /F /IM YTGrab.exe           >nul 2>&1',
-            'taskkill /F /IM YTGrabUninstaller.exe >nul 2>&1',
-            "",
-            "REM Give Explorer + the killed processes a beat to release",
-            "REM their file handles. Windows doesn't expose the release",
-            "REM synchronously, so we poll via the retry loop below.",
-            "ping -n 3 127.0.0.1 >nul",
-            "",
-            "set count=0",
-            ":retry",
-            "set /a count+=1",
-            f'echo Attempt !count!: rmdir /s /q "{target}" >> "{log_path}"',
-            f'rmdir /s /q "{target}" >> "{log_path}" 2>&1',
-            f'if not exist "{target}" goto done',
-            "if !count! geq 10 goto fail",
-            "ping -n 3 127.0.0.1 >nul",
-            "goto retry",
-            "",
-            ":done",
-            f'echo SUCCESS: folder removed at %DATE% %TIME% >> "{log_path}"',
-            "goto cleanup",
-            "",
-            ":fail",
-            (
-                f'echo FAILED: folder still exists after 10 attempts '
-                f'at %DATE% %TIME% >> "{log_path}"'
-            ),
-            (
-                f'echo User may need to delete "{target}" manually. '
-                f'>> "{log_path}"'
-            ),
-            "",
-            ":cleanup",
-            "endlocal",
-            "REM Self-delete the batch file. The (goto) 2>nul trick",
-            "REM makes cmd release its read lock on this .bat before",
-            "REM the del runs -- without it, del fails silently.",
-            '(goto) 2>nul & del "%~f0"',
-        ]
-        bat_content = "\r\n".join(bat_lines) + "\r\n"
-
         try:
-            bat_path.write_text(bat_content, encoding="ascii")
-        except Exception as exc:  # noqa: BLE001
-            self.had_error = True
-            self.log(f"  couldn't stage cleanup script: {exc}")
-            return
+            subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-NonInteractive",
+                    "-WindowStyle", "Hidden",
+                    "-ExecutionPolicy", "Bypass",
+                    "-Command", ps_script,
+                ],
+                capture_output=True, text=True, timeout=8,
+                creationflags=_no_window_flag(),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        # Give Explorer a moment to actually close the windows and
+        # release its directory handles before we queue the rmdir.
+        time.sleep(0.6)
+
+    def _remove_shortcuts(self):
+        self.status("Removing shortcuts...")
+        for lnk in SHORTCUTS:
+            if lnk and lnk.exists():
+                try:
+                    lnk.unlink()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def _wipe_webview_cache(self):
+        """Wipe %LOCALAPPDATA%\\YTGrab\\ -- WebView2's user-data dir
+        and any other per-user caches the app wrote outside the install
+        folder. Without this the uninstall leaves orphaned localStorage,
+        IndexedDB, service worker caches etc. under LOCALAPPDATA.
+
+        Also sweeps %TEMP%\\_MEI* dirs that PyInstaller one-file builds
+        extract into -- normally those self-clean on process exit but
+        they can linger after a crash.
+        """
+        self.status("Clearing app cache...")
+        if WEBVIEW_DIR and WEBVIEW_DIR.is_dir():
+            try:
+                shutil.rmtree(WEBVIEW_DIR, ignore_errors=True)
+            except Exception:  # noqa: BLE001
+                pass
+        # Clean up stale PyInstaller unpack dirs (onefile build leftovers).
+        try:
+            for entry in TEMP_DIR.iterdir():
+                if entry.name.startswith("_MEI") and entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _schedule_self_delete(self):
+        """Spawn a single hidden PowerShell process to wipe the install
+        folder after this uninstaller exits.
+
+        v1.8.1: replaces the .bat + cmd + ping chain with one hidden
+        PowerShell call. No cmd window, no ping flashes, one child
+        process. PowerShell's Start-Sleep is a built-in cmdlet (not an
+        external exe) so it doesn't allocate a console.
+
+        What bit v1.7.1: File Explorer holds an open directory handle
+        on whatever folder it's displaying, and the user is guaranteed
+        to have Explorer open on the install folder because that's how
+        they launched the uninstaller. Windows silently refuses rmdir
+        on a directory any process has open.
+
+        Flow:
+          1. Wait 2s for this Python process to exit -> releases its
+             YTGrabUninstaller.exe file handle.
+          2. Kill any lingering YTGrab.exe / YTGrabUninstaller.exe
+             just in case.
+          3. Retry Remove-Item up to 10 times with 1.5s gaps.
+          4. Log everything to %TEMP%\\ytgrab-uninst.log for support.
+        """
+        self.status("Scheduling final cleanup...")
+        target = str(INSTALL_DIR)
+        log_path = str(TEMP_DIR / "ytgrab-uninst.log")
+
+        # Double-up backslashes + escape single quotes for the PS literal.
+        target_ps  = target.replace("'", "''")
+        logpath_ps = log_path.replace("'", "''")
+
+        ps_script = (
+            "$ErrorActionPreference = 'SilentlyContinue'; "
+            f"$target = '{target_ps}'; "
+            f"$log = '{logpath_ps}'; "
+            "Set-Content -Path $log -Value \"=== YTGrab uninstall cleanup ===\"; "
+            "Add-Content -Path $log -Value \"Start: $(Get-Date)\"; "
+            "Add-Content -Path $log -Value \"Target: $target\"; "
+            # Wait for the uninstaller Python process to fully exit.
+            "Start-Sleep -Seconds 2; "
+            # Belt + suspenders: re-kill anything still holding files.
+            "Stop-Process -Name YTGrab -Force 2>$null; "
+            "Stop-Process -Name YTGrabUninstaller -Force 2>$null; "
+            "Start-Sleep -Milliseconds 500; "
+            # Retry loop: handles released asynchronously, so we poll.
+            "for ($i = 1; $i -le 10; $i++) { "
+            "  Add-Content -Path $log -Value \"Attempt $i\"; "
+            "  Remove-Item -Path $target -Recurse -Force "
+            "    -ErrorAction SilentlyContinue; "
+            "  if (-not (Test-Path $target)) { break } "
+            "  Start-Sleep -Milliseconds 1500 "
+            "} "
+            "if (Test-Path $target) { "
+            "  Add-Content -Path $log -Value "
+            "    \"FAILED: folder still exists after 10 attempts\"; "
+            "  Add-Content -Path $log -Value "
+            "    \"User may need to delete the folder manually.\" "
+            "} else { "
+            "  Add-Content -Path $log -Value "
+            "    \"SUCCESS: folder removed at $(Get-Date)\" "
+            "}"
+        )
 
         try:
             subprocess.Popen(
-                ["cmd", "/c", str(bat_path)],
+                [
+                    "powershell", "-NoProfile", "-NonInteractive",
+                    "-WindowStyle", "Hidden",
+                    "-ExecutionPolicy", "Bypass",
+                    "-Command", ps_script,
+                ],
                 cwd=(os.environ.get("SystemDrive", "C:") + "\\"),
-                creationflags=(
-                    _no_window_flag()
-                    | getattr(subprocess, "DETACHED_PROCESS", 0)
-                ),
+                # CREATE_NO_WINDOW alone -- do NOT add DETACHED_PROCESS
+                # as the pair-combination can briefly flash a console
+                # on some Win11 builds. -WindowStyle Hidden on the PS
+                # side covers us even if a parent console were allocated.
+                creationflags=_no_window_flag(),
                 close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         except Exception as exc:  # noqa: BLE001
             self.had_error = True
-            self.log(f"  couldn't launch cleanup script: {exc}")
+            self.status(f"Couldn't schedule cleanup: {exc}")
 
 
 def _no_window_flag() -> int:
@@ -283,6 +330,7 @@ FG = "#e8e8e8"
 FG_MUTED = "#9a9a9a"
 ACCENT = "#a78bfa"          # YT Grab purple
 ACCENT_HOVER = "#8b6fe0"
+DONE_GREEN = "#4ade80"
 LOG_BG = "#0a0a0a"
 LOG_FG = "#7a7a7a"
 
@@ -291,35 +339,36 @@ class UninstallerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("YT Grab - Uninstaller")
-        root.geometry("520x340")
-        root.minsize(480, 320)
+        root.geometry("520x380")
+        root.minsize(480, 360)
         root.configure(bg=BG)
 
         outer = tk.Frame(root, bg=BG, padx=28, pady=24)
         outer.pack(fill="both", expand=True)
 
         # --- Header -------------------------------------------------
-        tk.Label(
-            outer, text="Uninstall YT Grab",
+        self.header_var = tk.StringVar(value="Uninstall YT Grab")
+        self.header_lbl = tk.Label(
+            outer, textvariable=self.header_var,
             bg=BG, fg=FG,
             font=("Segoe UI Semibold", 16),
-        ).pack(anchor="w")
+        )
+        self.header_lbl.pack(anchor="w")
 
+        self.subhead_var = tk.StringVar(
+            value="Removes the app, app data, and shortcuts. "
+                  "Nothing else on your PC is touched."
+        )
         tk.Label(
-            outer,
-            text="Removes the app, app data, and shortcuts. "
-                 "Nothing else on your PC is touched.",
+            outer, textvariable=self.subhead_var,
             bg=BG, fg=FG_MUTED,
             font=("Segoe UI", 9),
             justify="left", wraplength=460,
         ).pack(anchor="w", pady=(4, 16))
 
         # --- Export checkbox ---------------------------------------
-        # Plain tk.Checkbutton (not ttk) so we can fully control the
-        # look on Windows -- ttk's clam theme renders the indicator
-        # as a weird "X" character on some systems.
         self.export_var = tk.IntVar(value=1)
-        tk.Checkbutton(
+        self.export_cb = tk.Checkbutton(
             outer,
             text="Export my downloads + history to the Desktop first",
             variable=self.export_var,
@@ -328,7 +377,8 @@ class UninstallerApp:
             highlightthickness=0, borderwidth=0,
             font=("Segoe UI", 10),
             anchor="w",
-        ).pack(anchor="w", pady=(0, 18))
+        )
+        self.export_cb.pack(anchor="w", pady=(0, 18))
 
         # --- Big primary button ------------------------------------
         self.uninstall_btn = tk.Button(
@@ -352,12 +402,38 @@ class UninstallerApp:
             cursor="hand2",
             command=self._on_cancel,
         )
-        self.cancel_btn.pack(pady=(0, 14))
+        self.cancel_btn.pack(pady=(0, 12))
 
-        # --- Tiny status line --------------------------------------
-        # Single label that gets overwritten as steps run. No giant
-        # log panel -- the user doesn't need a forensic trace, they
-        # need to know it's working.
+        # --- Progress bar (hidden until the user clicks Uninstall) --
+        # Accent-colored progress bar. ttk needs the clam theme to let
+        # us recolor the trough + fill.
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:  # noqa: BLE001
+            pass
+        style.configure(
+            "YT.Horizontal.TProgressbar",
+            background=ACCENT, troughcolor="#2a2a2a",
+            bordercolor=BG, lightcolor=ACCENT, darkcolor=ACCENT,
+            thickness=6,
+        )
+        style.configure(
+            "YTDone.Horizontal.TProgressbar",
+            background=DONE_GREEN, troughcolor="#2a2a2a",
+            bordercolor=BG, lightcolor=DONE_GREEN, darkcolor=DONE_GREEN,
+            thickness=6,
+        )
+        self.progress = ttk.Progressbar(
+            outer, style="YT.Horizontal.TProgressbar",
+            maximum=1.0, length=460, mode="determinate",
+        )
+        # Pack but stay invisible for the pre-uninstall state. We reveal
+        # it on button-click. pack_forget removes but preserves options.
+        self.progress.pack(fill="x", pady=(4, 6))
+        self.progress.pack_forget()
+
+        # --- Status line --------------------------------------------
         self.status_var = tk.StringVar(value="")
         tk.Label(
             outer, textvariable=self.status_var,
@@ -369,14 +445,16 @@ class UninstallerApp:
 
         self.worker_thread: threading.Thread | None = None
 
-    # -- log helpers ---------------------------------------------------
-
-    def _log(self, msg: str):
-        # Marshal to UI thread.
-        self.root.after(0, self._set_status, msg)
+    # -- UI-thread marshalling helpers --------------------------------
 
     def _set_status(self, msg: str):
-        self.status_var.set(msg)
+        self.root.after(0, self.status_var.set, msg)
+
+    def _set_progress(self, frac: float):
+        self.root.after(0, self._do_set_progress, float(frac))
+
+    def _do_set_progress(self, frac: float):
+        self.progress["value"] = max(0.0, min(1.0, frac))
 
     # -- button handlers ----------------------------------------------
 
@@ -393,16 +471,20 @@ class UninstallerApp:
         ):
             return
 
+        # Disable the controls + reveal the progress bar.
         self.uninstall_btn.configure(
             state="disabled",
             bg="#3a3a3a", fg=FG_MUTED,
-            text="Uninstalling ...",
+            text="Uninstalling...",
         )
         self.cancel_btn.configure(state="disabled")
+        self.export_cb.configure(state="disabled")
+        self.progress.pack(fill="x", pady=(4, 6))
 
         worker = UninstallerWorker(
-            log_callback=self._log,
-            done_callback=self._on_done,
+            status_cb=self._set_status,
+            progress_cb=self._set_progress,
+            done_cb=self._on_done,
             export_first=bool(self.export_var.get()),
         )
         self.worker_thread = threading.Thread(
@@ -419,23 +501,37 @@ class UninstallerApp:
         self, had_error: bool, export_target: Path | None
     ):
         if had_error:
-            self._set_status(
-                "Finished with errors. See %TEMP%\\ytgrab-uninst.log"
+            self.header_var.set("Uninstall finished with errors")
+            self.subhead_var.set(
+                "Some steps didn't complete. See "
+                "%TEMP%\\ytgrab-uninst.log for details."
             )
             self.cancel_btn.configure(state="normal", text="Close")
             return
 
+        # Success state: swap the bar to green, tick the header, and
+        # replace the uninstall button with a prominent "Done" banner.
+        self.progress.configure(style="YTDone.Horizontal.TProgressbar")
+        self.header_var.set("Uninstall complete")
         if export_target:
-            self._set_status(
-                f"Done. Your data is at Desktop\\{export_target.name}\\. "
-                "Closing..."
+            self.subhead_var.set(
+                f"Your data was exported to Desktop\\{export_target.name}\\. "
+                "The app folder will finish cleaning up in a moment."
             )
         else:
-            self._set_status("Done. Closing...")
-        # Close quickly -- the detached cleanup script handles the
-        # real wait (~8s) before it wipes the folder, so we don't
-        # need the uninstaller window to linger.
-        self.root.after(800, self.root.destroy)
+            self.subhead_var.set(
+                "YT Grab has been removed. The app folder will finish "
+                "cleaning up in a moment."
+            )
+        self.uninstall_btn.configure(
+            state="normal",
+            bg=DONE_GREEN, fg="#0a0a0a",
+            activebackground=DONE_GREEN, activeforeground="#0a0a0a",
+            text="Done \u2713",
+            command=self.root.destroy,
+        )
+        self.cancel_btn.configure(state="normal", text="Close")
+        self._set_status("")
 
 
 # --- Entrypoint -------------------------------------------------------
