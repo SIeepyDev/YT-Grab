@@ -46,10 +46,19 @@ if errorlevel 1 goto err_pyinstaller
 echo.
 if not exist "dist\YTGrab.exe" goto err_nooutput
 
+REM Build the standalone uninstaller alongside the main app. Stdlib-only,
+REM so this second pass adds ~10s and ~10MB. Output: dist\YTGrabUninstaller.exe
+echo.
+echo [yt-dl build] Building YTGrabUninstaller.exe...
+venv\Scripts\python.exe -m PyInstaller --clean Uninstaller.spec
+if errorlevel 1 goto err_pyinstaller_uninst
+if not exist "dist\YTGrabUninstaller.exe" goto err_nouninst
+
 echo ==================================================
 echo [yt-dl build] DONE
 echo.
-echo   Your exe:  %cd%\dist\YTGrab.exe
+echo   Your exe:        %cd%\dist\YTGrab.exe
+echo   Uninstaller:     %cd%\dist\YTGrabUninstaller.exe
 echo.
 echo   Send the single .exe to your friend. No Python needed on their end.
 echo   First launch may take 5-10 seconds as Windows unpacks it.
@@ -92,10 +101,24 @@ echo [yt-dl build] ERROR: PyInstaller failed. Scroll up for the real error.
 pause
 goto end
 
+:err_pyinstaller_uninst
+echo.
+echo [yt-dl build] ERROR: PyInstaller failed on Uninstaller.spec.
+echo [yt-dl build] Scroll up for the real error.
+pause
+goto end
+
 :err_nooutput
 echo.
 echo [yt-dl build] ERROR: build completed without producing dist\YTGrab.exe.
 echo [yt-dl build] Check the PyInstaller output above.
+pause
+goto end
+
+:err_nouninst
+echo.
+echo [yt-dl build] ERROR: build completed without producing dist\YTGrabUninstaller.exe.
+echo [yt-dl build] Check the PyInstaller output above for the uninstaller pass.
 pause
 goto end
 

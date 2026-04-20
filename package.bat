@@ -14,6 +14,7 @@ setlocal enableextensions enabledelayedexpansion
 cd /d "%~dp0"
 
 if not exist "dist\YTGrab.exe" goto err_noexe
+if not exist "dist\YTGrabUninstaller.exe" goto err_nouninst
 
 REM Clean any previous package staging + zip
 if exist "dist\YTGrab-pkg" rmdir /s /q "dist\YTGrab-pkg"
@@ -26,9 +27,11 @@ mkdir "dist\YTGrab-pkg\source"
 REM Copy the exe to the package root
 copy /y "dist\YTGrab.exe" "dist\YTGrab-pkg\YTGrab.exe" >nul
 
-REM Bundle the uninstaller alongside the .exe so users can cleanly
-REM remove app data (%LOCALAPPDATA%\YTGrab) and shortcuts in one click.
-copy /y "uninstall.bat" "dist\YTGrab-pkg\uninstall.bat" >nul
+REM Bundle the standalone uninstaller alongside the .exe so users can
+REM cleanly remove app data (%LOCALAPPDATA%\YTGrab), shortcuts, and the
+REM install folder in one click. .exe instead of .bat so users don't
+REM have to right-click a batch file.
+copy /y "dist\YTGrabUninstaller.exe" "dist\YTGrab-pkg\YTGrabUninstaller.exe" >nul
 
 REM Copy source fallback files. venv and dist are excluded (recipient
 REM recreates venv on their first launch.bat run). launch.vbs is the
@@ -106,17 +109,27 @@ echo [yt-dl pkg] Writing FRIEND_README.txt...
   echo.
   echo Uninstalling
   echo ------------
-  echo Run uninstall.bat to wipe app data ^(%%LOCALAPPDATA%%\YTGrab^) and
-  echo shortcuts. Your downloads folder is left alone -- back it up or
-  echo delete it yourself if you're done with the videos too.
+  echo Double-click YTGrabUninstaller.exe. It will:
+  echo   - optionally export your downloads and history to your Desktop
+  echo   - stop YTGrab.exe if it's running
+  echo   - delete %%LOCALAPPDATA%%\YTGrab ^(app data^)
+  echo   - delete the Desktop + Start Menu shortcuts
+  echo   - delete this install folder when it closes
+  echo.
+  echo It does NOT touch the registry, ProgramData, or any other folder.
   echo.
 ) > "dist\YTGrab-pkg\FRIEND_README.txt"
 
-REM Zip the whole package using PowerShell's Compress-Archive -- every
-REM modern Windows has this built in, no extra tools needed.
+REM Zip the whole package using .NET's built-in System.IO.Compression.ZipFile.
+REM We used to rely on PowerShell's Compress-Archive cmdlet, but on some
+REM machines the Microsoft.PowerShell.Archive module fails to load
+REM ("command was found in the module ... but the module could not be
+REM loaded"). The .NET API ships with every Windows install since Win8
+REM and has no such breakage.
 echo [yt-dl pkg] Creating zip...
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\YTGrab-pkg\*' -DestinationPath 'dist\YTGrab.zip' -Force"
+powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; if (Test-Path 'dist\YTGrab.zip') { Remove-Item 'dist\YTGrab.zip' -Force }; [System.IO.Compression.ZipFile]::CreateFromDirectory((Resolve-Path 'dist\YTGrab-pkg').Path, (Join-Path (Resolve-Path 'dist').Path 'YTGrab.zip'))"
 if errorlevel 1 goto err_zip
+if not exist "dist\YTGrab.zip" goto err_zip
 
 REM Keep the staging folder around for inspection, but the main deliverable
 REM is the .zip. Advise on size.
@@ -145,10 +158,19 @@ echo [yt-dl pkg] Run build.bat first, then re-run package.bat.
 pause
 goto end
 
+:err_nouninst
+echo.
+echo [yt-dl pkg] ERROR: dist\YTGrabUninstaller.exe not found.
+echo [yt-dl pkg] Run build.bat first -- it builds both exes.
+pause
+goto end
+
 :err_zip
 echo.
-echo [yt-dl pkg] ERROR: zip step failed. Check that PowerShell can run
-echo [yt-dl pkg] Compress-Archive ^(try: Get-Command Compress-Archive in PS^).
+echo [yt-dl pkg] ERROR: zip step failed. .NET ZipFile returned a non-zero
+echo [yt-dl pkg] exit code. Make sure PowerShell can load
+echo [yt-dl pkg] System.IO.Compression.FileSystem ^(ships with every
+echo [yt-dl pkg] Windows since Win8^).
 pause
 goto end
 
