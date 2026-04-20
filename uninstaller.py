@@ -2,20 +2,9 @@
 YT Grab - Standalone Uninstaller
 =================================
 
-A tkinter GUI uninstaller that does the same work as the legacy
-uninstall.bat, but as a single .exe so users don't have to right-click
-a batch file.
-
-Flow (mirrors the .bat version):
-  1. Optional: export downloads/, previous_downloads/, history.json,
-     activity.json to Desktop\\YTGrab-export-<timestamp>\\
-  2. Kill YTGrab.exe if it's running
-  3. Delete %LOCALAPPDATA%\\YTGrab\\ (the WebView2 storage path)
-  4. Delete Desktop + Start Menu shortcuts (current + legacy names)
-  5. Self-delete the install folder this exe lives in
-
-Doesn't touch the registry, ProgramData, or any folder outside the
-paths above. Safe to run on any machine.
+A tkinter GUI uninstaller. Single big button -- click and it does
+everything: optional export, kill app, wipe app data, remove shortcuts,
+self-delete the install folder.
 
 Build with PyInstaller via Uninstaller.spec ->
     dist\\YTGrabUninstaller.exe
@@ -33,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 
 # --- Paths ------------------------------------------------------------
@@ -104,80 +93,62 @@ class UninstallerWorker:
     def _export_data(self):
         ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         target = (DESKTOP or INSTALL_DIR) / f"YTGrab-export-{ts}"
-        self.log(f"[export] {target}")
+        self.log(f"Exporting your data to {target.name}/ ...")
         target.mkdir(parents=True, exist_ok=True)
         self.export_target = target
 
-        # Folder copies
         for folder in ("downloads", "previous_downloads"):
             src = INSTALL_DIR / folder
             if src.is_dir():
-                self.log(f"  copying {folder}/ ...")
+                self.log(f"  {folder}/")
                 shutil.copytree(src, target / folder, dirs_exist_ok=True)
 
-        # File copies
         for fname in ("history.json", "activity.json"):
             src = INSTALL_DIR / fname
             if src.is_file():
-                self.log(f"  copying {fname} ...")
+                self.log(f"  {fname}")
                 shutil.copy2(src, target / fname)
 
-        self.log("[export] done.")
-
     def _kill_process(self):
-        self.log("[1/4] Stopping YTGrab.exe ...")
+        self.log("Stopping YTGrab.exe ...")
         try:
-            res = subprocess.run(
+            subprocess.run(
                 ["taskkill", "/F", "/IM", "YTGrab.exe"],
                 capture_output=True, text=True, timeout=10,
                 creationflags=_no_window_flag(),
             )
-            if res.returncode == 0:
-                self.log("       killed.")
-                # Let Windows release file handles before we wipe.
-                time.sleep(2)
-            else:
-                self.log("       not running.")
-        except Exception as exc:  # noqa: BLE001
-            self.log(f"       taskkill failed: {exc}")
+            time.sleep(1)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _remove_appdata(self):
-        self.log("[2/4] Removing %LOCALAPPDATA%\\YTGrab ...")
+        self.log("Removing app data ...")
         if YTGRAB_DATA_DIR and YTGRAB_DATA_DIR.exists():
             try:
                 shutil.rmtree(YTGRAB_DATA_DIR, ignore_errors=False)
-                self.log("       removed.")
             except Exception as exc:  # noqa: BLE001
                 self.had_error = True
                 self.log(
-                    f"       FAILED ({exc}). Close YT Grab fully and retry."
+                    f"  FAILED ({exc}). Close YT Grab fully and retry."
                 )
-        else:
-            self.log("       already gone.")
 
     def _remove_shortcuts(self):
-        self.log("[3/4] Removing shortcuts ...")
-        any_removed = False
+        self.log("Removing shortcuts ...")
         for lnk in SHORTCUTS:
             if lnk and lnk.exists():
                 try:
                     lnk.unlink()
-                    self.log(f"       removed {lnk.name}")
-                    any_removed = True
-                except Exception as exc:  # noqa: BLE001
-                    self.log(f"       failed to remove {lnk.name}: {exc}")
-        if not any_removed:
-            self.log("       no shortcuts found.")
+                except Exception:  # noqa: BLE001
+                    pass
 
     def _schedule_self_delete(self):
         """Spawn a detached cmd that waits then wipes the install folder.
 
-        Classic Windows self-delete pattern — the child cmd inherits no
+        Classic Windows self-delete pattern -- the child cmd inherits no
         handles to our process, so once we exit it can rmdir us.
         """
-        self.log("[4/4] Scheduling install-folder removal ...")
+        self.log("Scheduling install folder removal ...")
         target = str(INSTALL_DIR)
-        # 3-second delay gives the GUI time to close cleanly.
         cmd = (
             f'timeout /t 3 /nobreak >nul & '
             f'rmdir /s /q "{target}"'
@@ -191,10 +162,9 @@ class UninstallerWorker:
                 ),
                 close_fds=True,
             )
-            self.log("       scheduled.")
         except Exception as exc:  # noqa: BLE001
             self.had_error = True
-            self.log(f"       scheduling failed: {exc}")
+            self.log(f"  scheduling failed: {exc}")
 
 
 def _no_window_flag() -> int:
@@ -204,137 +174,112 @@ def _no_window_flag() -> int:
 
 # --- GUI --------------------------------------------------------------
 
+# Color palette
+BG = "#1a1a1a"
+FG = "#e8e8e8"
+FG_MUTED = "#9a9a9a"
+ACCENT = "#a78bfa"          # YT Grab purple
+ACCENT_HOVER = "#8b6fe0"
+LOG_BG = "#0a0a0a"
+LOG_FG = "#7a7a7a"
+
+
 class UninstallerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("YT Grab - Uninstaller")
-        root.geometry("560x460")
-        root.minsize(520, 420)
-        root.configure(bg="#1e1e1e")
+        root.geometry("520x340")
+        root.minsize(480, 320)
+        root.configure(bg=BG)
 
-        # Modern dark style
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure(
-            "Dark.TFrame", background="#1e1e1e",
-        )
-        style.configure(
-            "Dark.TLabel", background="#1e1e1e", foreground="#e8e8e8",
-            font=("Segoe UI", 10),
-        )
-        style.configure(
-            "Title.TLabel", background="#1e1e1e", foreground="#ffffff",
-            font=("Segoe UI Semibold", 14),
-        )
-        style.configure(
-            "Dark.TCheckbutton", background="#1e1e1e", foreground="#e8e8e8",
-            font=("Segoe UI", 10),
-        )
-        style.map(
-            "Dark.TCheckbutton",
-            background=[("active", "#1e1e1e")],
-        )
-        style.configure(
-            "Danger.TButton", font=("Segoe UI Semibold", 10),
-            padding=(16, 8),
-        )
-        style.configure(
-            "Cancel.TButton", font=("Segoe UI", 10),
-            padding=(16, 8),
-        )
-
-        outer = ttk.Frame(root, style="Dark.TFrame", padding=20)
+        outer = tk.Frame(root, bg=BG, padx=28, pady=24)
         outer.pack(fill="both", expand=True)
 
-        ttk.Label(
-            outer, text="Uninstall YT Grab", style="Title.TLabel"
+        # --- Header -------------------------------------------------
+        tk.Label(
+            outer, text="Uninstall YT Grab",
+            bg=BG, fg=FG,
+            font=("Segoe UI Semibold", 16),
         ).pack(anchor="w")
 
-        body = (
-            "This will completely remove YT Grab from your PC:\n"
-            "  - Stop YTGrab.exe if it's running\n"
-            "  - Delete %LOCALAPPDATA%\\YTGrab\\\n"
-            "  - Delete Desktop and Start Menu shortcuts\n"
-            "  - Delete this install folder\n\n"
-            "It does NOT touch the registry, ProgramData, or any other\n"
-            "folder on your PC."
-        )
-        ttk.Label(
-            outer, text=body, style="Dark.TLabel", justify="left"
-        ).pack(anchor="w", pady=(8, 14))
-
-        # Export checkbox
-        self.export_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        tk.Label(
             outer,
-            text="Export downloads + history to Desktop first (recommended)",
+            text="Removes the app, app data, and shortcuts. "
+                 "Nothing else on your PC is touched.",
+            bg=BG, fg=FG_MUTED,
+            font=("Segoe UI", 9),
+            justify="left", wraplength=460,
+        ).pack(anchor="w", pady=(4, 16))
+
+        # --- Export checkbox ---------------------------------------
+        # Plain tk.Checkbutton (not ttk) so we can fully control the
+        # look on Windows -- ttk's clam theme renders the indicator
+        # as a weird "X" character on some systems.
+        self.export_var = tk.IntVar(value=1)
+        tk.Checkbutton(
+            outer,
+            text="Export my downloads + history to the Desktop first",
             variable=self.export_var,
-            style="Dark.TCheckbutton",
-        ).pack(anchor="w")
+            bg=BG, fg=FG, selectcolor=BG,
+            activebackground=BG, activeforeground=FG,
+            highlightthickness=0, borderwidth=0,
+            font=("Segoe UI", 10),
+            anchor="w",
+        ).pack(anchor="w", pady=(0, 18))
 
-        ttk.Label(
-            outer,
-            text=f"Install folder:  {INSTALL_DIR}",
-            style="Dark.TLabel",
-        ).pack(anchor="w", pady=(12, 4))
-
-        # Log box
-        log_frame = tk.Frame(outer, bg="#1e1e1e")
-        log_frame.pack(fill="both", expand=True, pady=(8, 12))
-
-        self.log_box = tk.Text(
-            log_frame, height=10, bg="#0f0f0f", fg="#cfcfcf",
-            insertbackground="#cfcfcf",
-            font=("Consolas", 9),
+        # --- Big primary button ------------------------------------
+        self.uninstall_btn = tk.Button(
+            outer, text="Uninstall YT Grab",
+            bg=ACCENT, fg="#ffffff",
+            activebackground=ACCENT_HOVER, activeforeground="#ffffff",
             relief="flat", borderwidth=0,
-            wrap="word", state="disabled",
-        )
-        scrollbar = ttk.Scrollbar(
-            log_frame, orient="vertical", command=self.log_box.yview
-        )
-        self.log_box.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.log_box.pack(side="left", fill="both", expand=True)
-
-        # Buttons
-        btns = ttk.Frame(outer, style="Dark.TFrame")
-        btns.pack(fill="x")
-
-        self.cancel_btn = ttk.Button(
-            btns, text="Cancel",
-            style="Cancel.TButton",
-            command=self._on_cancel,
-        )
-        self.cancel_btn.pack(side="right", padx=(8, 0))
-
-        self.uninstall_btn = ttk.Button(
-            btns, text="Uninstall YT Grab",
-            style="Danger.TButton",
+            font=("Segoe UI Semibold", 11),
+            padx=18, pady=10,
+            cursor="hand2",
             command=self._on_uninstall,
         )
-        self.uninstall_btn.pack(side="right")
+        self.uninstall_btn.pack(fill="x", pady=(0, 8))
+
+        self.cancel_btn = tk.Button(
+            outer, text="Cancel",
+            bg=BG, fg=FG_MUTED,
+            activebackground=BG, activeforeground=FG,
+            relief="flat", borderwidth=0,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+            command=self._on_cancel,
+        )
+        self.cancel_btn.pack(pady=(0, 14))
+
+        # --- Tiny status line --------------------------------------
+        # Single label that gets overwritten as steps run. No giant
+        # log panel -- the user doesn't need a forensic trace, they
+        # need to know it's working.
+        self.status_var = tk.StringVar(value="")
+        tk.Label(
+            outer, textvariable=self.status_var,
+            bg=BG, fg=LOG_FG,
+            font=("Consolas", 9),
+            anchor="w", justify="left",
+            wraplength=460,
+        ).pack(anchor="w", fill="x")
 
         self.worker_thread: threading.Thread | None = None
 
     # -- log helpers ---------------------------------------------------
 
     def _log(self, msg: str):
-        self.root.after(0, self._log_main_thread, msg)
+        # Marshal to UI thread.
+        self.root.after(0, self._set_status, msg)
 
-    def _log_main_thread(self, msg: str):
-        self.log_box.configure(state="normal")
-        self.log_box.insert("end", msg + "\n")
-        self.log_box.see("end")
-        self.log_box.configure(state="disabled")
+    def _set_status(self, msg: str):
+        self.status_var.set(msg)
 
     # -- button handlers ----------------------------------------------
 
     def _on_cancel(self):
         if self.worker_thread and self.worker_thread.is_alive():
-            return  # ignore once running -- can't cleanly cancel rmtree
+            return
         self.root.destroy()
 
     def _on_uninstall(self):
@@ -345,13 +290,17 @@ class UninstallerApp:
         ):
             return
 
-        self.uninstall_btn.configure(state="disabled")
+        self.uninstall_btn.configure(
+            state="disabled",
+            bg="#3a3a3a", fg=FG_MUTED,
+            text="Uninstalling ...",
+        )
         self.cancel_btn.configure(state="disabled")
 
         worker = UninstallerWorker(
             log_callback=self._log,
             done_callback=self._on_done,
-            export_first=self.export_var.get(),
+            export_first=bool(self.export_var.get()),
         )
         self.worker_thread = threading.Thread(
             target=worker.run, daemon=True
@@ -367,27 +316,25 @@ class UninstallerApp:
         self, had_error: bool, export_target: Path | None
     ):
         if had_error:
-            self._log("")
-            self._log("Finished with errors. See messages above.")
+            self._set_status(
+                "Finished with errors. Close YT Grab and run again."
+            )
             self.cancel_btn.configure(state="normal", text="Close")
             return
 
-        self._log("")
-        self._log("YT Grab is fully uninstalled.")
         if export_target:
-            self._log(f"Your data is at: {export_target}")
-        self._log("This window will close in 3 seconds; the install")
-        self._log("folder will be deleted right after.")
-        # Close on its own so the cmd self-delete can run.
+            self._set_status(
+                f"Done. Your data is at Desktop\\{export_target.name}\\. "
+                "Closing in 3s..."
+            )
+        else:
+            self._set_status("Done. Closing in 3s...")
         self.root.after(3000, self.root.destroy)
 
 
 # --- Entrypoint -------------------------------------------------------
 
 def main():
-    # Edge case: someone runs the uninstaller from inside the install
-    # folder while another copy of YTGrab.exe has the data dir locked.
-    # Surface a friendly error rather than a Tcl traceback.
     if sys.platform != "win32":
         print("This uninstaller only runs on Windows.")
         sys.exit(1)
