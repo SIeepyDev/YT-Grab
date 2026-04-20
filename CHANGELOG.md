@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.0](https://github.com/SIeepyDev/yt-grab/compare/v1.10.0...v1.11.0) (2026-04-20)
+
+
+### Features
+
+* drag-to-top maximize + COM navigate2 for explorer reuse ([5fa324a](https://github.com/SIeepyDev/yt-grab/commit/5fa324a97ad1ffe0145b44ab2e35cb936aab1f75))
+
+
+### Bug Fixes
+
+* revert Navigate2 COM, Explorer wasn't opening ([740f91a](https://github.com/SIeepyDev/yt-grab/commit/740f91a8226680af675739c6b800d5b508245e97))
+
 ## [1.10.0](https://github.com/SIeepyDev/yt-grab/compare/v1.9.0...v1.10.0) (2026-04-20)
 
 
