@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/SIeepyDev/YT-Grab/compare/v1.16.0...v1.16.1) (2026-04-20)
+
+
+### Bug Fixes
+
+* installer targeted wrong repo after YT-Grab rename ([68eb02d](https://github.com/SIeepyDev/YT-Grab/commit/68eb02dbbe62d3784ca68ad7bf99d0ab577f8e32))
+
 ## [1.16.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.15.0...v1.16.0) (2026-04-20)
 
 
