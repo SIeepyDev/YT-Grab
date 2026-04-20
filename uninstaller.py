@@ -42,6 +42,7 @@ def _install_dir() -> Path:
 INSTALL_DIR = _install_dir()
 USERPROFILE = Path(os.environ.get("USERPROFILE", "")).resolve()
 APPDATA = Path(os.environ.get("APPDATA", "")).resolve()
+TEMP_DIR = Path(os.environ.get("TEMP", r"C:\Windows\Temp"))
 
 DESKTOP = USERPROFILE / "Desktop" if USERPROFILE else None
 START_MENU = (
@@ -113,15 +114,16 @@ class UninstallerWorker:
 
     def _kill_process(self):
         self.log("Stopping YTGrab.exe ...")
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "YTGrab.exe"],
-                capture_output=True, text=True, timeout=10,
-                creationflags=_no_window_flag(),
-            )
-            time.sleep(1)
-        except Exception:  # noqa: BLE001
-            pass
+        for image in ("YTGrab.exe",):
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", image],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=_no_window_flag(),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(1)
 
     def _remove_shortcuts(self):
         self.log("Removing shortcuts ...")
@@ -133,41 +135,130 @@ class UninstallerWorker:
                     pass
 
     def _schedule_self_delete(self):
-        """Spawn a detached cmd that waits then wipes the install folder.
+        """Spawn a detached batch that wipes the install folder.
 
-        Three things that bit us in the original implementation:
+        What bit v1.7.1: File Explorer holds an open directory handle
+        on whatever folder it's displaying, and the user is guaranteed
+        to have Explorer open on the install folder because that's
+        how they launched the uninstaller in the first place. Windows
+        silently refuses rmdir on a directory any process has open, so
+        the v1.7.1 rmdir ran and did nothing.
 
-        1. `timeout /t N` reads from stdin to detect Ctrl-C, and under
-           DETACHED_PROCESS there's no console so it fails immediately
-           with "Input redirection is not supported". Use a ping loop
-           instead -- ping does not touch stdin.
-        2. The child cmd inherits the PARENT's CWD by default, which
-           here is INSTALL_DIR. Windows refuses to rmdir a folder that
-           any process has as its CWD, so the rmdir silently failed.
-           Spawn the child with cwd=C:\\ (system root) so it doesn't
-           hold the install folder open.
-        3. Retry once after an extra beat -- occasionally the
-           uninstaller's own YTGrabUninstaller.exe handle takes a
-           moment to release after the process exits.
+        This version writes a self-contained .bat to %TEMP% that:
+          1. Logs every step to %TEMP%\\ytgrab-uninst.log so we can
+             actually diagnose future failures.
+          2. Waits for this Python process to exit.
+          3. Asks any File Explorer windows viewing the install folder
+             (or a subfolder of it) to close, via the Shell.Application
+             COM object.
+          4. Kills any lingering YTGrab.exe / YTGrabUninstaller.exe.
+          5. Retries rmdir up to 10 times with 3s gaps -- handles still
+             pending from the closed Explorer windows clear on their
+             own schedule, so we poll.
+          6. Self-deletes the .bat.
+
+        Using a written-out .bat (instead of cmd /c "long string")
+        gives us control over line-by-line behavior and, critically,
+        lets us use delayed expansion for the retry counter.
         """
         self.log("Scheduling install folder removal ...")
         target = str(INSTALL_DIR).rstrip("\\")
-        # ping -n 5 127.0.0.1 = ~4 second wait (first ping is instant,
-        # then 1s between each of the remaining 4). Plenty of time for
-        # this process to exit and release the file handles.
-        cmd = (
-            f'ping -n 5 127.0.0.1 >nul & '
-            f'rmdir /s /q "{target}" & '
-            f'ping -n 3 127.0.0.1 >nul & '
-            f'rmdir /s /q "{target}"'
+        bat_path = TEMP_DIR / f"ytgrab-uninst-{os.getpid()}.bat"
+        log_path = TEMP_DIR / "ytgrab-uninst.log"
+
+        # PowerShell one-liner that walks every open Shell window and
+        # closes the ones whose LocationURL points at our install
+        # folder (or anything beneath it). Match is on the tail
+        # "Programs/YTGrab" or "Programs\YTGrab" -- specific enough
+        # that we don't hit unrelated windows, loose enough that it
+        # catches a user drilled into downloads/ or previous_downloads/.
+        ps_close = (
+            "$s = New-Object -ComObject Shell.Application; "
+            "foreach ($w in @($s.Windows())) { "
+            "try { "
+            "if ($w.LocationURL -and "
+            "($w.LocationURL -match 'Programs[/\\\\]YTGrab')) "
+            "{ $w.Quit() } "
+            "} catch {} "
+            "}"
         )
-        # Root of the system drive (C:\ typically). Guaranteed to exist
-        # and not be our install folder.
-        safe_cwd = (os.environ.get("SystemDrive", "C:") + "\\")
+
+        bat_lines = [
+            "@echo off",
+            "setlocal enabledelayedexpansion",
+            f'echo === YTGrab uninstall cleanup === > "{log_path}"',
+            f'echo Start: %DATE% %TIME%    >> "{log_path}"',
+            f'echo Target: {target}       >> "{log_path}"',
+            "",
+            "REM Wait for the uninstaller Python process to fully exit",
+            "REM so its own YTGrabUninstaller.exe file handle releases.",
+            "ping -n 4 127.0.0.1 >nul",
+            "",
+            "REM Close any File Explorer windows viewing the install",
+            "REM folder. Explorer holds an open handle on the directory",
+            "REM it's showing, which blocks rmdir -- this was the v1.7.1",
+            "REM silent-failure bug.",
+            f'echo Closing Explorer windows... >> "{log_path}"',
+            (
+                f'powershell -NoProfile -Command "{ps_close}" '
+                f'>> "{log_path}" 2>&1'
+            ),
+            "",
+            "REM Belt + suspenders -- kill anything still holding files.",
+            "REM taskkill returns nonzero when the process isn't running,",
+            "REM which is fine, so swallow both streams.",
+            'taskkill /F /IM YTGrab.exe           >nul 2>&1',
+            'taskkill /F /IM YTGrabUninstaller.exe >nul 2>&1',
+            "",
+            "REM Give Explorer + the killed processes a beat to release",
+            "REM their file handles. Windows doesn't expose the release",
+            "REM synchronously, so we poll via the retry loop below.",
+            "ping -n 3 127.0.0.1 >nul",
+            "",
+            "set count=0",
+            ":retry",
+            "set /a count+=1",
+            f'echo Attempt !count!: rmdir /s /q "{target}" >> "{log_path}"',
+            f'rmdir /s /q "{target}" >> "{log_path}" 2>&1',
+            f'if not exist "{target}" goto done',
+            "if !count! geq 10 goto fail",
+            "ping -n 3 127.0.0.1 >nul",
+            "goto retry",
+            "",
+            ":done",
+            f'echo SUCCESS: folder removed at %DATE% %TIME% >> "{log_path}"',
+            "goto cleanup",
+            "",
+            ":fail",
+            (
+                f'echo FAILED: folder still exists after 10 attempts '
+                f'at %DATE% %TIME% >> "{log_path}"'
+            ),
+            (
+                f'echo User may need to delete "{target}" manually. '
+                f'>> "{log_path}"'
+            ),
+            "",
+            ":cleanup",
+            "endlocal",
+            "REM Self-delete the batch file. The (goto) 2>nul trick",
+            "REM makes cmd release its read lock on this .bat before",
+            "REM the del runs -- without it, del fails silently.",
+            '(goto) 2>nul & del "%~f0"',
+        ]
+        bat_content = "\r\n".join(bat_lines) + "\r\n"
+
+        try:
+            bat_path.write_text(bat_content, encoding="ascii")
+        except Exception as exc:  # noqa: BLE001
+            self.had_error = True
+            self.log(f"  couldn't stage cleanup script: {exc}")
+            return
+
         try:
             subprocess.Popen(
-                ["cmd", "/c", cmd],
-                cwd=safe_cwd,
+                ["cmd", "/c", str(bat_path)],
+                cwd=(os.environ.get("SystemDrive", "C:") + "\\"),
                 creationflags=(
                     _no_window_flag()
                     | getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -176,7 +267,7 @@ class UninstallerWorker:
             )
         except Exception as exc:  # noqa: BLE001
             self.had_error = True
-            self.log(f"  scheduling failed: {exc}")
+            self.log(f"  couldn't launch cleanup script: {exc}")
 
 
 def _no_window_flag() -> int:
@@ -329,7 +420,7 @@ class UninstallerApp:
     ):
         if had_error:
             self._set_status(
-                "Finished with errors. Close YT Grab and run again."
+                "Finished with errors. See %TEMP%\\ytgrab-uninst.log"
             )
             self.cancel_btn.configure(state="normal", text="Close")
             return
@@ -341,9 +432,9 @@ class UninstallerApp:
             )
         else:
             self._set_status("Done. Closing...")
-        # Close quickly -- the detached cmd's ping loop (~4s) handles
-        # the real wait before it wipes the folder, so we don't need
-        # the uninstaller window to linger.
+        # Close quickly -- the detached cleanup script handles the
+        # real wait (~8s) before it wipes the folder, so we don't
+        # need the uninstaller window to linger.
         self.root.after(800, self.root.destroy)
 
 

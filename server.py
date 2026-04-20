@@ -1769,13 +1769,13 @@ def api_open_previous_folder():
             # Prefer reusing a window already at this exact path.
             if _focus_existing_explorer(target_path):
                 return jsonify({"ok": True, "reused": True})
-            # Otherwise, if the user already has ANY Explorer window open
-            # (e.g. from clicking the Downloads button earlier), pile a
-            # new tab onto that window instead of spawning a separate
-            # one. Win11 only -- Win10 falls through to the new-window
-            # path below.
-            if _open_in_existing_explorer_as_tab(target_path):
-                return jsonify({"ok": True, "tabbed": True})
+            # v1.7.2: no tab-injection path. Previously we tried to add
+            # a new tab to any open Explorer window via keyboard macro
+            # (Ctrl+T / Ctrl+L / paste / Enter); timing glitches caused
+            # it to occasionally hijack the frontmost tab (navigating it
+            # to 'This PC') AND spawn a second window, which is the
+            # exact bug this route is shipping to fix. Simple rule now:
+            # reuse window already at this path, otherwise new window.
             try:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
@@ -1821,13 +1821,11 @@ def api_open_folder():
             if _focus_existing_explorer(target_folder):
                 return jsonify({"ok": True, "reused": True})
 
-            # If the user has any other Explorer window open, pile a
-            # new tab onto it instead of opening a separate window.
-            # Win11 only -- on Win10 this is a no-op and we fall
-            # through to the new-window spawn below. Skipped when
-            # revealing a specific file (we want /select, behavior).
-            if not target_path.is_file() and _open_in_existing_explorer_as_tab(target_folder):
-                return jsonify({"ok": True, "tabbed": True})
+            # v1.7.2: no tab-injection path. See api_open_previous_folder
+            # for the full story -- keyboard-macro Ctrl+T timing was
+            # duplicating windows and occasionally hijacking the wrong
+            # tab to 'This PC'. Rule is now: reuse if already at path,
+            # otherwise new window.
 
             # No existing window at that path. Spawn new, using the
             # focus-stealing workaround stack so Explorer comes forward
@@ -2163,7 +2161,36 @@ def _launch_pywebview():
         try: window.destroy()
         except Exception: pass
 
-    window.expose(_tb_minimize, _tb_maximize_toggle, _tb_close)
+    def _tb_drag():
+        """Initiate a native Windows move from a JS mousedown on the
+        custom title bar. WebView2 honors -webkit-app-region: drag
+        inconsistently -- specifically, once a frameless pywebview
+        window has been restored from maximized, the drag region goes
+        dead until the next maximize/restore cycle. Rather than fight
+        the WebView2 quirk, we hand the drag off to Windows directly.
+
+        Mechanism: the user clicked INSIDE the WebView2 child (which
+        is why a JS mousedown fired), so the child has captured the
+        mouse. ReleaseCapture() clears that. Then SendMessageW with
+        WM_NCLBUTTONDOWN + HTCAPTION tells the top-level window 'treat
+        this mousedown as if it happened on the non-client caption
+        area' -- Windows takes over from there: aero-snap, multi-
+        monitor, edge-snap and all. We return immediately; the
+        message loop pumps the drag synchronously on the UI thread.
+        """
+        try:
+            import ctypes
+            hwnd = _find_my_window_hwnd(require_visible=True)
+            if not hwnd:
+                return
+            WM_NCLBUTTONDOWN = 0x00A1
+            HTCAPTION = 2
+            ctypes.windll.user32.ReleaseCapture()
+            ctypes.windll.user32.SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)
+        except Exception:
+            pass
+
+    window.expose(_tb_minimize, _tb_maximize_toggle, _tb_close, _tb_drag)
 
     def _debug_log(msg):
         """Write a diagnostic line to debug.log next to server.py so we

@@ -110,7 +110,11 @@
     border-bottom: 1px solid var(--border);
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 0 0 14px;
-    -webkit-app-region: drag;
+    /* v1.7.2: drag is driven by JS mousedown -> pywebview.api._tb_drag
+       (which calls Win32 WM_NCLBUTTONDOWN/HTCAPTION). We previously
+       used -webkit-app-region: drag here, but WebView2 stops honoring
+       it after the window is restored from maximized, so the window
+       would go un-draggable. See tbStartDrag() below. */
     user-select: none;
     font-size: 11px; color: var(--text-3);
   }
@@ -1738,6 +1742,33 @@
   .modal-actions button:hover { background: var(--bg-3); }
   .modal-actions button.primary:hover { background: var(--accent-hover); }
 
+  /* =================================================================
+     In-app prompt + confirm dialogs (v1.7.2). These replace the
+     browser-native window.prompt() / window.confirm() calls, which
+     WebView2 renders unstyled and pinned to the top of the viewport
+     -- looked out of place against the rest of the dark purple UI.
+     Shared modal-back overlay, compact 420px body, accent-purple
+     focus ring on the input, same button treatment as .modal-actions.
+     ================================================================= */
+  .prompt-modal { width: min(90vw, 420px); height: auto; gap: 14px; }
+  .prompt-modal .prompt-body {
+    font-size: 13px; color: var(--text-2); line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .prompt-modal input[type="text"] {
+    width: 100%;
+    background: var(--bg-2); border: 1px solid var(--border-2);
+    border-radius: 8px; padding: 10px 12px;
+    color: var(--text);
+    font-family: var(--font); font-size: 13px;
+    outline: none;
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .prompt-modal input[type="text"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
+  }
+
   /* Toast */
   #toast {
     position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(12px);
@@ -2703,6 +2734,36 @@
     </div>
   </div>
 
+  <!-- In-app prompt dialog (v1.7.2). Replaces the browser-native
+       window.prompt() used by saveCurrentView. Driven by appPrompt(),
+       which returns a Promise<string|null>. Click-outside and Esc
+       cancel; Enter submits. Empty / whitespace-only submissions
+       resolve as null so callers can treat them as cancel. -->
+  <div class="modal-back" id="prompt-back" onclick="if (event.target === this) _promptDone(null)">
+    <div class="modal prompt-modal">
+      <h3 id="prompt-title">Prompt</h3>
+      <div class="prompt-body" id="prompt-body"></div>
+      <input type="text" id="prompt-input" autocomplete="off" spellcheck="false">
+      <div class="modal-actions">
+        <button onclick="_promptDone(null)">Cancel</button>
+        <button class="primary" onclick="_promptDone(document.getElementById('prompt-input').value)">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- In-app confirm dialog (v1.7.2). Replaces window.confirm().
+       Driven by appConfirm(), returns Promise<boolean>. -->
+  <div class="modal-back" id="confirm-back" onclick="if (event.target === this) _confirmDone(false)">
+    <div class="modal prompt-modal">
+      <h3 id="confirm-title">Are you sure?</h3>
+      <div class="prompt-body" id="confirm-body"></div>
+      <div class="modal-actions">
+        <button onclick="_confirmDone(false)">Cancel</button>
+        <button class="primary" id="confirm-ok" onclick="_confirmDone(true)">OK</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast"></div>
 
 <script>
@@ -3396,11 +3457,13 @@
     toast(`Applied "${view.name}"`, 'ok');
   }
 
-  function saveCurrentView() {
-    const name = prompt('Name this view:');
-    if (!name) return;
+  async function saveCurrentView() {
+    // v1.7.2: in-app prompt (see appPrompt) instead of window.prompt,
+    // which WebView2 renders unstyled + pinned to the top of the view.
+    const name = await appPrompt('Save view', 'Give this snapshot a name so you can return to it later.', '');
+    if (name == null) return;                 // user cancelled
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed) return;                     // empty / whitespace-only -> no-op
     // Build the snapshot by pulling only VIEW_KEYS out of SETTINGS.
     const snapshot = {};
     VIEW_KEYS.forEach(k => { snapshot[k] = SETTINGS[k]; });
@@ -3413,11 +3476,13 @@
     toast(`Saved "${preset.name}"`, 'ok');
   }
 
-  function deleteViewPreset(id) {
+  async function deleteViewPreset(id) {
     if (!Array.isArray(SETTINGS.viewPresets)) return;
     const view = SETTINGS.viewPresets.find(v => v.id === id);
     if (!view) return;
-    if (!confirm(`Delete "${view.name}"?`)) return;
+    // v1.7.2: in-app confirm, same reason as saveCurrentView above.
+    const ok = await appConfirm('Delete view?', `"${view.name}" will be removed from your saved views.`);
+    if (!ok) return;
     SETTINGS.viewPresets = SETTINGS.viewPresets.filter(v => v.id !== id);
     if (SETTINGS.activeViewId === id) SETTINGS.activeViewId = null;
     saveSettings(SETTINGS);
@@ -4725,8 +4790,18 @@
   // Keyboard shortcuts + init
   // ---------------------------------------------------------------------------
   document.addEventListener('keydown', (e) => {
-    // Close modal on Escape
+    // Close modal on Escape. v1.7.2: prompt + confirm dialogs take
+    // priority -- they cancel via their own resolver so callers see
+    // null/false instead of the generic closeModal() path.
     if (e.key === 'Escape') {
+      if (document.getElementById('prompt-back').classList.contains('active')) {
+        _promptDone(null);
+        return;
+      }
+      if (document.getElementById('confirm-back').classList.contains('active')) {
+        _confirmDone(false);
+        return;
+      }
       closeModal();
       return;
     }
@@ -5084,6 +5159,105 @@
   function tbClose() {
     try { window.pywebview && window.pywebview.api._tb_close(); } catch {}
   }
+
+  // v1.7.2: native window drag. -webkit-app-region: drag on the title
+  // bar worked initially but went dead once the window was restored
+  // from maximized (known WebView2 quirk). We bypass the CSS path
+  // entirely: on mousedown inside the title bar (but not on a control
+  // button), call into Python which issues ReleaseCapture +
+  // WM_NCLBUTTONDOWN(HTCAPTION) so Windows runs the drag natively --
+  // aero-snap, multi-monitor, edge-snap all work for free.
+  function tbStartDrag(evt) {
+    // Only left-button presses initiate a move.
+    if (evt.button !== 0) return;
+    // Ignore presses on any interactive child of the title bar
+    // (min/max/close + the theme-mode button). They have their own
+    // click handlers; swallowing their mousedown would prevent click.
+    if (evt.target.closest('.tb-btn, .tb-mode')) return;
+    try { window.pywebview && window.pywebview.api._tb_drag(); } catch {}
+  }
+
+  // ---------------------------------------------------------------------
+  // In-app prompt + confirm dialogs (v1.7.2). Replace the browser-native
+  // window.prompt() / window.confirm() used by saveCurrentView and
+  // deleteViewPreset. WebView2 paints those at the top of the viewport
+  // with default OS chrome, which clashes hard with the app's dark
+  // purple look. These helpers share .modal-back styling and return
+  // Promises so callers can await them.
+  //
+  // Only one dialog is ever open at a time, so a single module-level
+  // resolver pointer is enough -- _promptDone / _confirmDone (wired to
+  // the buttons + click-outside) resolve and clear it.
+  // ---------------------------------------------------------------------
+  let _promptResolver = null;
+  let _confirmResolver = null;
+
+  function appPrompt(title, body, initial) {
+    return new Promise((resolve) => {
+      // Defensive: if a previous dialog somehow never resolved,
+      // resolve it as cancel before taking over the DOM.
+      if (_promptResolver) { try { _promptResolver(null); } catch {} }
+      _promptResolver = resolve;
+      document.getElementById('prompt-title').textContent = title || 'Prompt';
+      document.getElementById('prompt-body').textContent  = body  || '';
+      const input = document.getElementById('prompt-input');
+      input.value = initial || '';
+      document.getElementById('prompt-back').classList.add('active');
+      // Focus + select on the next tick so the field is ready for
+      // typing the moment the modal appears.
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    });
+  }
+
+  function _promptDone(value) {
+    document.getElementById('prompt-back').classList.remove('active');
+    const resolver = _promptResolver;
+    _promptResolver = null;
+    if (resolver) resolver(value);
+  }
+
+  function appConfirm(title, body) {
+    return new Promise((resolve) => {
+      if (_confirmResolver) { try { _confirmResolver(false); } catch {} }
+      _confirmResolver = resolve;
+      document.getElementById('confirm-title').textContent = title || 'Are you sure?';
+      document.getElementById('confirm-body').textContent  = body  || '';
+      document.getElementById('confirm-back').classList.add('active');
+      // Move focus to the OK button so Enter = confirm, matching the
+      // browser-native window.confirm default-button convention.
+      setTimeout(() => {
+        const ok = document.getElementById('confirm-ok');
+        if (ok) ok.focus();
+      }, 0);
+    });
+  }
+
+  function _confirmDone(value) {
+    document.getElementById('confirm-back').classList.remove('active');
+    const resolver = _confirmResolver;
+    _confirmResolver = null;
+    if (resolver) resolver(value);
+  }
+
+  // Enter inside the prompt input = submit (same as clicking Save).
+  // Wired inline: this script runs at the end of <body>, so #prompt-
+  // input and #title-bar already exist in the DOM -- no need to wait
+  // on DOMContentLoaded (which in some pywebview timing races never
+  // fires on the very first load).
+  (function wireV172Interactions() {
+    const input = document.getElementById('prompt-input');
+    if (input) {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          _promptDone(input.value);
+        }
+      });
+    }
+    // Title-bar drag initiator -- see tbStartDrag above.
+    const bar = document.getElementById('title-bar');
+    if (bar) bar.addEventListener('mousedown', tbStartDrag);
+  })();
 
   // Rail button: open the downloads folder in Explorer. Server defaults
   // to DOWNLOADS_DIR when no path is given. Reuses an already-open
