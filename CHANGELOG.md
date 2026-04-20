@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0](https://github.com/SIeepyDev/yt-grab/compare/v1.5.0...v1.6.0) (2026-04-20)
+
+
+### Features
+
+* add uninstall.bat for clean removal ([f749b60](https://github.com/SIeepyDev/yt-grab/commit/f749b60fe5e5ba73b59634df26ec3b7761c80d2f))
+* replace uninstall.bat with YTGrabUninstaller.exe ([82015fc](https://github.com/SIeepyDev/yt-grab/commit/82015fc445afa29828c357b69e76a502c49a44f3))
+* uninstaller exports data and self-deletes install folder ([8b1e9d2](https://github.com/SIeepyDev/yt-grab/commit/8b1e9d230e4401df3519cebc59dc52101efa4b2a))
+
+
+### Bug Fixes
+
+* uninstall export uses PowerShell timestamp for Win11 24H2+ ([dec1200](https://github.com/SIeepyDev/yt-grab/commit/dec12009094f3baca50ffabe1f369a718bf6eb0e))
+
 ## [1.5.0](https://github.com/SIeepyDev/yt-grab/compare/v1.4.0...v1.5.0) (2026-04-20)
 
 
