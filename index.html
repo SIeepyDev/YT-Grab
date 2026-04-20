@@ -2277,8 +2277,10 @@
         <div class="about-line">Local. Private. Premium.</div>
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/YT-Grab" target="_blank" rel="noopener">View source on GitHub</a>
+        <button class="settings-reset" onclick="openExportModal()" style="margin-top: 14px;">Export data...</button>
+        <div class="about-line" style="margin-top: 4px; font-size: 10px">Write a <code style="font-size: 10px">YTGrab-export-*</code> folder to your Desktop. Pick History, Previous, or both. Safe to do any time; a fresh copy every click.</div>
         <button class="settings-reset" onclick="importExport()" style="margin-top: 14px;">Import exported data...</button>
-        <div class="about-line" style="margin-top: 4px; font-size: 10px">Pick a <code style="font-size: 10px">YTGrab-export-*</code> folder the uninstaller left on your Desktop. Downloads, Previous, and history merge in; nothing is overwritten.</div>
+        <div class="about-line" style="margin-top: 4px; font-size: 10px">Pick a <code style="font-size: 10px">YTGrab-export-*</code> folder (from the Export button above or the uninstaller's Desktop dump). Files and history merge in; nothing is overwritten.</div>
         <button class="settings-reset" onclick="resetSettings()" style="margin-top: 14px;">Reset all settings</button>
       </section>
 
@@ -2796,6 +2798,36 @@
       <div class="modal-actions">
         <button onclick="_confirmDone(false)">Cancel</button>
         <button class="primary" id="confirm-ok" onclick="_confirmDone(true)">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export picker modal. Lets the user choose what to include in the
+       YTGrab-export-* folder written to Desktop. Same layout as the
+       uninstaller's export, so import works for either source. -->
+  <div class="modal-back" id="export-back" onclick="if (event.target === this) closeExportModal()">
+    <div class="modal prompt-modal">
+      <h3>Export data</h3>
+      <div class="prompt-body">
+        Writes a <code>YTGrab-export-*</code> folder to your Desktop. Pick what to include:
+      </div>
+      <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: var(--text); cursor: pointer; padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-2);">
+        <input type="checkbox" id="export-history" checked style="margin-top: 2px;">
+        <span>
+          <strong style="color: var(--text);">History</strong><br>
+          <span style="color: var(--text-3); font-size: 11px;">Current files on disk + <code style="font-size: 10px;">history.json</code></span>
+        </span>
+      </label>
+      <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: var(--text); cursor: pointer; padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-2);">
+        <input type="checkbox" id="export-previous" checked style="margin-top: 2px;">
+        <span>
+          <strong style="color: var(--text);">Previous Downloads</strong><br>
+          <span style="color: var(--text-3); font-size: 11px;">Deleted-but-restorable items + <code style="font-size: 10px;">activity.json</code></span>
+        </span>
+      </label>
+      <div class="modal-actions">
+        <button onclick="closeExportModal()">Cancel</button>
+        <button class="primary" id="export-confirm" onclick="runExport()">Export to Desktop</button>
       </div>
     </div>
   </div>
@@ -3931,6 +3963,58 @@
     // Refresh both panels so the imported entries appear immediately.
     try { await loadHistory(); } catch (e) {}
     try { await loadActivity(); } catch (e) {}
+  }
+
+  // Export picker: show/hide the modal, then POST selected buckets to
+  // /api/export_data. Output is a YTGrab-export-<timestamp> folder on
+  // the Desktop -- same layout as the uninstaller's export, so the
+  // result round-trips through /api/import_data cleanly.
+  function openExportModal() {
+    const back = document.getElementById('export-back');
+    if (!back) return;
+    // Default both on every open; overrides the last session's state.
+    document.getElementById('export-history').checked  = true;
+    document.getElementById('export-previous').checked = true;
+    back.classList.add('active');
+  }
+
+  function closeExportModal() {
+    const back = document.getElementById('export-back');
+    if (back) back.classList.remove('active');
+  }
+
+  async function runExport() {
+    const inc_dl = document.getElementById('export-history').checked;
+    const inc_pv = document.getElementById('export-previous').checked;
+    if (!inc_dl && !inc_pv) {
+      toast('Pick at least one thing to export', 'err');
+      return;
+    }
+    const btn = document.getElementById('export-confirm');
+    const wasText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting...'; }
+    try {
+      const r = await api('POST', '/api/export_data', {
+        include_downloads: inc_dl,
+        include_previous:  inc_pv,
+      });
+      if (!r.ok) {
+        toast('Export failed: ' + (r.error || 'unknown'), 'err');
+        return;
+      }
+      const n = (r.downloads_exported || 0) + (r.previous_exported || 0);
+      toast(
+        `Exported ${n} folder${n === 1 ? '' : 's'} to Desktop`,
+        'ok'
+      );
+      closeExportModal();
+      // Reveal the new folder in Explorer so the user can spot it.
+      if (r.path) {
+        try { await api('POST', '/api/open_folder', { path: r.path }); } catch (e) {}
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = wasText || 'Export to Desktop'; }
+    }
   }
 
   async function resetSettings() {
@@ -5512,6 +5596,8 @@
   document.addEventListener('keydown', (e) => {
     // Esc: close things in priority order -- modal > sidebar > themebar > context menu
     if (e.key === 'Escape') {
+      const ex = document.getElementById('export-back');
+      if (ex && ex.classList.contains('active')) { closeExportModal(); return; }
       const pl = document.getElementById('pl-back');
       if (pl && pl.classList.contains('active')) { closePlaylist(); return; }
       const sc = document.getElementById('sc-back');

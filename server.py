@@ -1882,12 +1882,106 @@ def api_open_previous_folder():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/export_data", methods=["POST"])
+def api_export_data():
+    """Export selected buckets to a YTGrab-export-<timestamp> folder on
+    the Desktop. Same layout as the uninstaller's export so /api/
+    import_data can read it back on any install.
+
+    Layout:
+        YTGrab-export-<ts>/
+            downloads/            (only if include_downloads)
+            history.json          (only if include_downloads)
+            previous_downloads/   (only if include_previous)
+            activity.json         (only if include_previous)
+
+    Body:
+        { "include_downloads": bool, "include_previous": bool }
+
+    At least one bucket must be selected.
+    """
+    data = request.get_json(silent=True) or {}
+    inc_dl = bool(data.get("include_downloads", True))
+    inc_pv = bool(data.get("include_previous",  True))
+
+    if not (inc_dl or inc_pv):
+        return jsonify({
+            "ok": False,
+            "error": "pick at least one thing to export",
+        }), 400
+
+    # Desktop is the natural home for a portable export; fall back to
+    # the install folder if the shell profile is weird.
+    up = os.environ.get("USERPROFILE", "")
+    desktop = Path(up) / "Desktop" if up else None
+    root = desktop if (desktop and desktop.is_dir()) else BASE_DIR
+
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    target = root / f"YTGrab-export-{ts}"
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": f"couldn't create export folder: {e}",
+        }), 500
+
+    counts = {"downloads_exported": 0, "previous_exported": 0}
+
+    # History bucket: downloads/ folder + history.json (the index).
+    if inc_dl and DOWNLOADS_DIR.is_dir():
+        dst_folder = target / "downloads"
+        try:
+            dst_folder.mkdir(parents=True, exist_ok=True)
+            for child in DOWNLOADS_DIR.iterdir():
+                if not child.is_dir():
+                    continue
+                try:
+                    shutil.copytree(child, dst_folder / child.name,
+                                    dirs_exist_ok=True)
+                    counts["downloads_exported"] += 1
+                except Exception as e:
+                    print(f"[export] copy failed for {child.name}: {e}",
+                          file=sys.stderr)
+            if HISTORY_FILE.is_file():
+                shutil.copy2(HISTORY_FILE, target / "history.json")
+        except Exception as e:
+            print(f"[export] history bucket failed: {e}", file=sys.stderr)
+
+    # Previous bucket: previous_downloads/ folder + activity.json (log
+    # of deleted items so import can restore the Previous panel).
+    if inc_pv and PREVIOUS_DIR.is_dir():
+        dst_folder = target / "previous_downloads"
+        try:
+            dst_folder.mkdir(parents=True, exist_ok=True)
+            for child in PREVIOUS_DIR.iterdir():
+                if not child.is_dir():
+                    continue
+                try:
+                    shutil.copytree(child, dst_folder / child.name,
+                                    dirs_exist_ok=True)
+                    counts["previous_exported"] += 1
+                except Exception as e:
+                    print(f"[export] copy failed for {child.name}: {e}",
+                          file=sys.stderr)
+            if ACTIVITY_FILE.is_file():
+                shutil.copy2(ACTIVITY_FILE, target / "activity.json")
+        except Exception as e:
+            print(f"[export] previous bucket failed: {e}", file=sys.stderr)
+
+    return jsonify({
+        "ok": True,
+        "path": str(target),
+        **counts,
+    })
+
+
 @app.route("/api/import_data", methods=["POST"])
 def api_import_data():
-    """Import a YTGrab-export-* folder produced by the uninstaller's
-    "Export my data to Desktop" step. Merges downloads/, previous_
-    downloads/, history.json, and activity.json into the current
-    install.
+    """Import a YTGrab-export-* folder produced by /api/export_data or
+    the uninstaller's "Export my data to Desktop" step. Merges
+    downloads/, previous_downloads/, history.json, and activity.json
+    into the current install.
 
     Merge strategy: NEVER overwrite. Per-video folders that already
     exist on disk are skipped (the user's current copy wins). JSON
