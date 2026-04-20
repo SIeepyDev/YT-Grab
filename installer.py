@@ -40,7 +40,7 @@ from tkinter import ttk
 # --- Identity ---------------------------------------------------------
 
 GITHUB_OWNER = "SIeepyDev"
-GITHUB_REPO  = "YTGrab"      # the PUBLIC distribution repo
+GITHUB_REPO  = "YT-Grab"     # the PUBLIC distribution repo
 RELEASE_API  = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 
 APP_EXE_NAME      = "YTGrab.exe"
