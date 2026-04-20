@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 
 
 # --- Paths ------------------------------------------------------------
@@ -60,11 +60,16 @@ WEBVIEW_DIR = LOCALAPPDATA / "YTGrab" if LOCALAPPDATA.name else None
 
 SHORTCUTS = []
 if DESKTOP:
-    SHORTCUTS += [DESKTOP / "YT Grab.lnk", DESKTOP / "YT Downloader.lnk"]
+    SHORTCUTS += [
+        DESKTOP / "YT Grab.lnk",
+        DESKTOP / "Uninstall YT Grab.lnk",   # v1.9.1
+        DESKTOP / "YT Downloader.lnk",       # legacy
+    ]
 if START_MENU:
     SHORTCUTS += [
         START_MENU / "YT Grab.lnk",
-        START_MENU / "YT Downloader.lnk",
+        START_MENU / "Uninstall YT Grab.lnk",   # v1.9.1
+        START_MENU / "YT Downloader.lnk",       # legacy
     ]
 
 
@@ -339,7 +344,18 @@ class UninstallerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("YT Grab - Uninstaller")
-        root.geometry("520x380")
+        W, H = 520, 380
+        # Center on the primary monitor. tk's default placement dumps
+        # the window in the top-left, which looks unpolished next to
+        # the installer's centered ttk progress window.
+        try:
+            sw = root.winfo_screenwidth()
+            sh = root.winfo_screenheight()
+            x = max(0, (sw - W) // 2)
+            y = max(0, (sh - H) // 2)
+            root.geometry(f"{W}x{H}+{x}+{y}")
+        except Exception:  # noqa: BLE001
+            root.geometry(f"{W}x{H}")
         root.minsize(480, 360)
         root.configure(bg=BG)
 
@@ -464,13 +480,10 @@ class UninstallerApp:
         self.root.destroy()
 
     def _on_uninstall(self):
-        if not messagebox.askyesno(
-            "Confirm uninstall",
-            "Remove YT Grab from this PC? This can't be undone.",
-            parent=self.root,
-        ):
-            return
-
+        # The big purple "Uninstall YT Grab" button IS the confirmation.
+        # v1.8.0's extra messagebox.askyesno was a double-prompt that
+        # made the UI feel nagging -- users click the button, they've
+        # decided. Skip it.
         # Disable the controls + reveal the progress bar.
         self.uninstall_btn.configure(
             state="disabled",

@@ -2189,49 +2189,104 @@ def _launch_pywebview():
         except Exception: pass
 
     def _tb_drag():
-        """Initiate a native Windows move from a JS mousedown on the
-        custom title bar. WebView2 honors -webkit-app-region: drag
-        inconsistently -- specifically, once a frameless pywebview
-        window has been restored from maximized, the drag region goes
-        dead until the next maximize/restore cycle.
+        """Move the window by polling the OS cursor position.
 
-        v1.8.1 rewrite: the previous SendMessageW(WM_NCLBUTTONDOWN)
-        approach failed silently after a restore cycle. Two reasons:
-          1. SendMessage from a worker thread blocks until the target
-             window's UI thread processes it, which races against
-             WebView2's own mouse capture state.
-          2. WM_NCLBUTTONDOWN requires the mouse to still be DOWN on
-             the caption area at message-process time -- by the time
-             our async JS->Python bridge call completes, that state
-             may have decayed.
+        Background on why this is the third rewrite: WebView2 captures
+        the mouse inside its child control so aggressively that
+        neither WM_NCLBUTTONDOWN nor WM_SYSCOMMAND(SC_MOVE) routes the
+        subsequent mousemove events to the top-level window's move
+        loop -- they stay inside WebView2. That's why v1.7.2's
+        SendMessage approach broke after restore, and why v1.8.1's
+        PostMessage approach also didn't work.
 
-        Fix: PostMessageW(WM_SYSCOMMAND, SC_MOVE | 0x0002). The
-        0x0002 low-bit on the wParam tells Windows "this move is
-        being driven by the mouse, enter the standard drag loop."
-        Equivalent to the user picking "Move" from the system menu
-        and then moving the mouse. PostMessage queues it -- no
-        thread-sync deadlock -- and Windows acquires its own capture
-        regardless of WebView2's prior capture state. Aero-snap,
-        multi-monitor, edge-snap all still work."""
+        Solution: skip the Windows system move loop entirely. When JS
+        fires mousedown on the title bar, it calls here. We spawn a
+        background thread that:
+          1. Reads the initial cursor position (GetCursorPos -- reads
+             raw OS cursor, unaffected by who holds mouse capture).
+          2. Reads the current window rect.
+          3. Loops: poll GetAsyncKeyState(VK_LBUTTON). While the left
+             button is still down, compute cursor delta, SetWindowPos
+             the top-level window to match. ~120Hz.
+          4. Exits when the button is released.
+
+        Caveats:
+          - No native aero-snap (drag-to-top = maximize, drag-to-edge
+            = half-tile). Could be re-added manually via edge detection
+            but not a shipping blocker.
+          - If the window is maximized, we restore it first so there's
+            a draggable target -- matches standard OS behavior (drag
+            from max = unmaximize + move with cursor).
+        """
         try:
             import ctypes
+            from ctypes import wintypes
             hwnd = _find_my_window_hwnd(require_visible=True)
             if not hwnd:
-                _debug_log("_tb_drag: no hwnd found")
+                _debug_log("_tb_drag: no hwnd")
                 return
-            WM_SYSCOMMAND = 0x0112
-            SC_MOVE = 0xF010
-            MOUSEMOVE_FLAG = 0x0002  # tells Windows to use mouse, not keyboard
-            # ReleaseCapture is best-effort -- only works on the calling
-            # thread's captured window, but harmless to call cross-thread.
-            try:
-                ctypes.windll.user32.ReleaseCapture()
-            except Exception:
-                pass
-            ok = ctypes.windll.user32.PostMessageW(
-                hwnd, WM_SYSCOMMAND, SC_MOVE | MOUSEMOVE_FLAG, 0
-            )
-            _debug_log(f"_tb_drag posted SC_MOVE to hwnd={hwnd} ok={ok}")
+
+            # Initial cursor position
+            start_cursor = wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(start_cursor))
+            c_x0, c_y0 = start_cursor.x, start_cursor.y
+
+            # If maximized, restore first so there's a sized window to
+            # drag. After restore, center the window under the cursor
+            # horizontally so it doesn't jump off-screen (mimics how
+            # Windows natively unmaximizes on a title-bar drag).
+            SW_RESTORE = 9
+            if ctypes.windll.user32.IsZoomed(hwnd):
+                # Query the restored size before restoring, so we can
+                # position the restored window under the cursor.
+                ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+                # Give the restore a beat to settle.
+                time.sleep(0.02)
+
+            rect = wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            w_x0, w_y0 = rect.left, rect.top
+            win_w = rect.right - rect.left
+            win_h = rect.bottom - rect.top
+
+            # If the cursor is now outside the (possibly just-restored)
+            # window, re-anchor the window so the cursor stays inside
+            # the title-bar area. Guesses cursor at 1/3 width from the
+            # left, 16px from top.
+            if not (w_x0 <= c_x0 <= w_x0 + win_w and
+                    w_y0 <= c_y0 <= w_y0 + win_h):
+                w_x0 = c_x0 - int(win_w / 3)
+                w_y0 = c_y0 - 16
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, 0, w_x0, w_y0, 0, 0, 0x0001 | 0x0004 | 0x0010
+                )
+
+            VK_LBUTTON = 0x01
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            SWP_NOACTIVATE = 0x0010
+            FLAGS = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+
+            def _drag_worker(c_x0=c_x0, c_y0=c_y0, w_x0=w_x0, w_y0=w_y0):
+                try:
+                    deadline = time.time() + 30.0  # safety cap
+                    while time.time() < deadline:
+                        state = ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON)
+                        if not (state & 0x8000):
+                            break
+                        pt = wintypes.POINT()
+                        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+                        new_x = w_x0 + (pt.x - c_x0)
+                        new_y = w_y0 + (pt.y - c_y0)
+                        ctypes.windll.user32.SetWindowPos(
+                            hwnd, 0, new_x, new_y, 0, 0, FLAGS
+                        )
+                        time.sleep(0.008)  # ~120Hz
+                except Exception as e:
+                    _debug_log(f"drag worker: {e}")
+
+            threading.Thread(target=_drag_worker, daemon=True).start()
+            _debug_log(f"_tb_drag started hwnd={hwnd}")
         except Exception as e:
             _debug_log(f"_tb_drag failed: {e}")
 

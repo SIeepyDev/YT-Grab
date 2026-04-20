@@ -129,9 +129,13 @@ class InstallerWorker:
             target_version, encoding="utf-8"
         )
 
-        if is_first_install:
-            self.log("Creating shortcuts...")
-            self._create_shortcuts()
+        # v1.9.1: create shortcuts on EVERY install, not just the first.
+        # Users reported vanishing Desktop shortcuts (Windows sometimes
+        # sweeps orphaned .lnks; users also delete them and then can't
+        # find a way to get them back). Re-creating on every launch of
+        # the installer is idempotent and cheap.
+        self.log("Creating shortcuts...")
+        self._create_shortcuts()
 
         self.progress(0.98)
         self.log(f"Installed v{target_version}. Launching...")
@@ -241,34 +245,47 @@ class InstallerWorker:
             pass
 
     def _create_shortcuts(self):
-        """Make a Desktop + Start Menu .lnk pointing at the installed
-        setup .exe (so every launch runs the update check)."""
-        target = INSTALL_DIR / SETUP_EXE_NAME
-        icon   = INSTALL_DIR / APP_EXE_NAME   # use app's embedded icon
+        """Make Desktop + Start Menu .lnks for the app AND the
+        uninstaller. The app shortcut points at SETUP_EXE_NAME so every
+        launch triggers an update check; the uninstaller shortcut
+        points directly at YTGrabUninstaller.exe."""
+        app_target    = INSTALL_DIR / SETUP_EXE_NAME
+        uninst_target = INSTALL_DIR / UNINST_EXE_NAME
+        icon          = INSTALL_DIR / APP_EXE_NAME   # shared icon
         for folder in (DESKTOP, START_MENU):
             if folder is None:
                 continue
             try:
                 folder.mkdir(parents=True, exist_ok=True)
-                lnk = folder / "YT Grab.lnk"
-                self._make_shortcut(lnk, target, icon, INSTALL_DIR)
+                self._make_shortcut(
+                    folder / "YT Grab.lnk", app_target, icon, INSTALL_DIR,
+                    description="YT Grab - YouTube downloader",
+                )
+                self._make_shortcut(
+                    folder / "Uninstall YT Grab.lnk", uninst_target,
+                    icon, INSTALL_DIR,
+                    description="Remove YT Grab from this PC",
+                )
             except Exception as exc:
                 self.log(f"  shortcut failed in {folder.name}: {exc}")
 
-    def _make_shortcut(self, lnk_path, target, icon, working_dir):
+    def _make_shortcut(self, lnk_path, target, icon, working_dir,
+                       description="YT Grab - YouTube downloader"):
         """Create a .lnk via PowerShell + WScript.Shell COM. No
         non-stdlib deps -- PowerShell ships with every Windows."""
+        desc_ps = description.replace("'", "''")
         ps = (
             "$WS = New-Object -ComObject WScript.Shell; "
             f"$S = $WS.CreateShortcut('{str(lnk_path)}'); "
             f"$S.TargetPath = '{str(target)}'; "
             f"$S.WorkingDirectory = '{str(working_dir)}'; "
             f"$S.IconLocation = '{str(icon)},0'; "
-            "$S.Description = 'YT Grab - YouTube downloader'; "
+            f"$S.Description = '{desc_ps}'; "
             "$S.Save()"
         )
         subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            ["powershell", "-NoProfile", "-NonInteractive",
+             "-WindowStyle", "Hidden", "-Command", ps],
             capture_output=True, text=True, timeout=15,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -356,7 +373,16 @@ class InstallerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("YT Grab Setup")
-        root.geometry("460x230")
+        W, H = 460, 230
+        # Center on the primary monitor (not just top-left tk default).
+        try:
+            sw = root.winfo_screenwidth()
+            sh = root.winfo_screenheight()
+            x = max(0, (sw - W) // 2)
+            y = max(0, (sh - H) // 2)
+            root.geometry(f"{W}x{H}+{x}+{y}")
+        except Exception:  # noqa: BLE001
+            root.geometry(f"{W}x{H}")
         root.resizable(False, False)
         root.configure(bg=BG)
 
