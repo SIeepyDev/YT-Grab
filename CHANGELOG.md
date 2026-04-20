@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/SIeepyDev/yt-grab/compare/v1.8.0...v1.9.0) (2026-04-20)
+
+
+### Features
+
+* reliable drag + explorer tabs + polished uninstaller ([a00e7c1](https://github.com/SIeepyDev/yt-grab/commit/a00e7c115382e9262e7704d311ddf8dc298e1283))
+
 ## [1.8.0](https://github.com/SIeepyDev/yt-grab/compare/v1.7.1...v1.8.0) (2026-04-20)
 
 
