@@ -106,7 +106,12 @@ function Invoke-Gh($method, $path, $body) {
     return Invoke-RestMethod @params
 }
 
-# --- Handle existing release -----------------------------------------
+# --- Find or create the release --------------------------------------
+#
+# Default path: if release-please already published vX.Y.Z (with its
+# auto-generated changelog body), we attach assets to it instead of
+# deleting + recreating.  Pass -Force to nuke and rebuild the release
+# from this script's boilerplate body.
 
 $existing = $null
 try {
@@ -116,24 +121,27 @@ try {
     if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
 }
 
+$release = $null
 if ($existing) {
-    if (-not $Force) {
-        Fail "Release $tag already exists on $Owner/$Repo. Re-run with -Force to delete + recreate, or bump the version first."
-    }
-    Info "Deleting existing release $tag (id=$($existing.id)) because -Force was passed..."
-    Invoke-Gh "DELETE" "/releases/$($existing.id)" $null | Out-Null
-    # Also delete the underlying tag ref so create-release can recreate it.
-    try {
-        Invoke-Gh "DELETE" "/git/refs/tags/$tag" $null | Out-Null
-    } catch {
-        # Tag may not exist separately; not fatal.
+    if ($Force) {
+        Info "Deleting existing release $tag (id=$($existing.id)) because -Force was passed..."
+        Invoke-Gh "DELETE" "/releases/$($existing.id)" $null | Out-Null
+        # Also delete the underlying tag ref so create-release can recreate it.
+        try {
+            Invoke-Gh "DELETE" "/git/refs/tags/$tag" $null | Out-Null
+        } catch {
+            # Tag may not exist separately; not fatal.
+        }
+    } else {
+        Info "Release $tag already exists (id=$($existing.id)); attaching assets to it."
+        Info "  (pass -Force to delete + recreate instead)"
+        $release = $existing
     }
 }
 
-# --- Create the release ----------------------------------------------
-
-Info "Creating release $tag on $Owner/$Repo..."
-$releaseBody = @"
+if (-not $release) {
+    Info "Creating release $tag on $Owner/$Repo..."
+    $releaseBody = @"
 YT Grab $tag
 
 Download **YTGrabSetup.exe** below to install or update.
@@ -141,16 +149,33 @@ Download **YTGrabSetup.exe** below to install or update.
 See the [README](https://github.com/$Owner/$Repo) for install steps and notes on Smart App Control.
 "@
 
-$createPayload = @{
-    tag_name         = $tag
-    target_commitish = "main"
-    name             = $tag
-    body             = $releaseBody
-    draft            = [bool]$Draft
-    prerelease       = [bool]$Prerelease
+    $createPayload = @{
+        tag_name         = $tag
+        target_commitish = "main"
+        name             = $tag
+        body             = $releaseBody
+        draft            = [bool]$Draft
+        prerelease       = [bool]$Prerelease
+    }
+    $release = Invoke-Gh "POST" "/releases" $createPayload
+    Success "Release created: id=$($release.id)"
 }
-$release = Invoke-Gh "POST" "/releases" $createPayload
-Success "Release created: id=$($release.id)"
+
+# --- Clean up conflicting assets -------------------------------------
+#
+# If a prior run (or a half-finished upload) left any asset with the
+# same filename on this release, delete it first so the upload below
+# doesn't 422 on "already_exists".
+
+$assetNames = $assets | ForEach-Object { Split-Path $_ -Leaf }
+if ($release.assets) {
+    foreach ($existingAsset in $release.assets) {
+        if ($assetNames -contains $existingAsset.name) {
+            Info "Removing existing asset $($existingAsset.name) (id=$($existingAsset.id))..."
+            Invoke-Gh "DELETE" "/releases/assets/$($existingAsset.id)" $null | Out-Null
+        }
+    }
+}
 
 # --- Upload assets ---------------------------------------------------
 
