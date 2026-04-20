@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7.0](https://github.com/SIeepyDev/yt-grab/compare/v1.6.0...v1.7.0) (2026-04-20)
+
+
+### Features
+
+* online installer + auto-updater bootstrapper ([23e2ad8](https://github.com/SIeepyDev/yt-grab/commit/23e2ad8701c439095707510f505dd5ae9421b61c))
+
+
+### Bug Fixes
+
+* typography size slider + Explorer single-window tabs ([5b14bd6](https://github.com/SIeepyDev/yt-grab/commit/5b14bd6b9c41307b3f5ae163d7b4f91a6eb5f7d2))
+* uninstaller GUI redesign -- prominent button, tighter layout ([a144d0b](https://github.com/SIeepyDev/yt-grab/commit/a144d0bc30535d89c4a82881bf5134fce81c8e59))
+
 ## [1.6.0](https://github.com/SIeepyDev/yt-grab/compare/v1.5.0...v1.6.0) (2026-04-20)
 
 
