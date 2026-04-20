@@ -1574,6 +1574,164 @@ def _focus_existing_explorer(folder_path):
     return False
 
 
+def _is_win11():
+    """True if Windows 11 (build >= 22000). File Explorer gained tabs
+    in the Moment 1 update (build 22621) -- we gate the tab-via-
+    keyboard path behind this so Win10 users still get new windows."""
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        import platform
+        parts = platform.version().split(".")
+        return len(parts) >= 3 and int(parts[2]) >= 22000
+    except Exception:
+        return False
+
+
+def _find_any_explorer_hwnd():
+    """First HWND of any open file:// Explorer window. Used to pile a
+    new tab onto an existing window instead of spawning a fresh one.
+    COM must be initialized on the calling thread."""
+    try:
+        import comtypes.client
+        shell = comtypes.client.CreateObject("Shell.Application")
+        windows = shell.Windows()
+        count = windows.Count
+        for i in range(count):
+            try:
+                w = windows.Item(i)
+                if w is None:
+                    continue
+                if (w.LocationURL or "").lower().startswith("file:"):
+                    return int(w.HWND)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _clipboard_get_text():
+    """Read CF_UNICODETEXT off the clipboard, or None."""
+    try:
+        import ctypes
+        CF_UNICODETEXT = 13
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        if not u32.OpenClipboard(0):
+            return None
+        try:
+            h = u32.GetClipboardData(CF_UNICODETEXT)
+            if not h:
+                return None
+            ptr = k32.GlobalLock(h)
+            if not ptr:
+                return None
+            try:
+                return ctypes.wstring_at(ptr)
+            finally:
+                k32.GlobalUnlock(h)
+        finally:
+            u32.CloseClipboard()
+    except Exception:
+        return None
+
+
+def _clipboard_set_text(text):
+    """Stash Unicode text on the clipboard. Returns True on success."""
+    try:
+        import ctypes
+        CF_UNICODETEXT = 13
+        GMEM_MOVEABLE = 0x0002
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        if not u32.OpenClipboard(0):
+            return False
+        try:
+            u32.EmptyClipboard()
+            data = (text + "\0").encode("utf-16-le")
+            handle = k32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            if not handle:
+                return False
+            ptr = k32.GlobalLock(handle)
+            if not ptr:
+                return False
+            ctypes.memmove(ptr, data, len(data))
+            k32.GlobalUnlock(handle)
+            u32.SetClipboardData(CF_UNICODETEXT, handle)
+            return True
+        finally:
+            u32.CloseClipboard()
+    except Exception:
+        return False
+
+
+def _send_key_combo(modifiers, vk):
+    """Send a Win32 key combo via keybd_event. `modifiers` is a list of
+    VK codes pressed before `vk` and released after in reverse order."""
+    import ctypes
+    KEYEVENTF_KEYUP = 0x0002
+    u32 = ctypes.windll.user32
+    for m in modifiers:
+        u32.keybd_event(m, 0, 0, 0)
+    u32.keybd_event(vk, 0, 0, 0)
+    u32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    for m in reversed(modifiers):
+        u32.keybd_event(m, 0, KEYEVENTF_KEYUP, 0)
+
+
+def _open_in_existing_explorer_as_tab(folder_path):
+    """If any Explorer window is open on Win11, focus it and add a new
+    tab pointing at folder_path via keyboard automation. Returns True
+    if a tab was sent. Best-effort: saves + restores the user's
+    clipboard around the paste. Win10 is skipped (no tab support)."""
+    if not _is_win11():
+        return False
+    if not sys.platform.startswith("win"):
+        return False
+    import ctypes
+    try:
+        ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+    except Exception:
+        pass
+    hwnd = _find_any_explorer_hwnd()
+    if not hwnd:
+        return False
+
+    VK_CONTROL = 0x11
+    VK_RETURN  = 0x0D
+    VK_T       = 0x54
+    VK_L       = 0x4C
+    VK_V       = 0x56
+
+    # Stash and later restore the user's clipboard so we don't clobber
+    # whatever they had copied.
+    saved_clip = _clipboard_get_text()
+    try:
+        _activate_explorer_hwnd(hwnd, center=False)
+        time.sleep(0.18)
+        _send_key_combo([VK_CONTROL], VK_T)      # Ctrl+T -- new tab
+        time.sleep(0.22)
+        _send_key_combo([VK_CONTROL], VK_L)      # Ctrl+L -- focus address bar
+        time.sleep(0.10)
+        if not _clipboard_set_text(str(folder_path)):
+            return False
+        time.sleep(0.05)
+        _send_key_combo([VK_CONTROL], VK_V)      # Ctrl+V -- paste path
+        time.sleep(0.05)
+        _send_key_combo([], VK_RETURN)           # Enter -- navigate
+        return True
+    except Exception:
+        return False
+    finally:
+        # Restore clipboard after Explorer's had a beat to read it.
+        if saved_clip is not None:
+            def _restore():
+                time.sleep(0.5)
+                _clipboard_set_text(saved_clip)
+            threading.Thread(target=_restore, daemon=True).start()
+
+
 def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
     """After spawning a new Explorer window via ShellExecuteW, poll for
     it to appear in Shell.Application.Windows() and then focus + center
@@ -1608,8 +1766,16 @@ def api_open_previous_folder():
         target_path.mkdir(exist_ok=True)   # make sure it's there
         if sys.platform.startswith("win"):
             import ctypes
+            # Prefer reusing a window already at this exact path.
             if _focus_existing_explorer(target_path):
                 return jsonify({"ok": True, "reused": True})
+            # Otherwise, if the user already has ANY Explorer window open
+            # (e.g. from clicking the Downloads button earlier), pile a
+            # new tab onto that window instead of spawning a separate
+            # one. Win11 only -- Win10 falls through to the new-window
+            # path below.
+            if _open_in_existing_explorer_as_tab(target_path):
+                return jsonify({"ok": True, "tabbed": True})
             try:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
@@ -1654,6 +1820,14 @@ def api_open_folder():
             # If yes, we're done -- no new window spawned.
             if _focus_existing_explorer(target_folder):
                 return jsonify({"ok": True, "reused": True})
+
+            # If the user has any other Explorer window open, pile a
+            # new tab onto it instead of opening a separate window.
+            # Win11 only -- on Win10 this is a no-op and we fall
+            # through to the new-window spawn below. Skipped when
+            # revealing a specific file (we want /select, behavior).
+            if not target_path.is_file() and _open_in_existing_explorer_as_tab(target_folder):
+                return jsonify({"ok": True, "tabbed": True})
 
             # No existing window at that path. Spawn new, using the
             # focus-stealing workaround stack so Explorer comes forward

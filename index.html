@@ -186,6 +186,14 @@
     line-height:    var(--line-height);
     letter-spacing: var(--letter-spacing);
     font-weight:    var(--font-weight-body);
+    /* v1.6.1: most child elements (cards, labels, buttons, history
+       rows) declare explicit pixel font-sizes, so the calc() above
+       only affects raw body text -- the size slider felt broken.
+       `zoom` rescales the entire body subtree (incl. those px values)
+       while leaving the title bar / sidebar / themebar alone (they
+       are position: fixed and live outside body's flow). Edge
+       Chromium -- pywebview's Windows backend -- supports `zoom`. */
+    zoom: var(--font-scale);
     /* Establish a stacking context so the canvas FX pseudos
        (body::before for noise, body::after for gradient) can sit at
        z-index: -1 — above body's own bg but below every child, so
