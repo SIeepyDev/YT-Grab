@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.1](https://github.com/SIeepyDev/yt-grab/compare/v1.7.0...v1.7.1) (2026-04-20)
+
+
+### Bug Fixes
+
+* Fix:  ([46a2109](https://github.com/SIeepyDev/yt-grab/commit/46a210995298c08ec9772e470c9458462d45b067))
+* uninstaller actually deletes the install folder ([46a2109](https://github.com/SIeepyDev/yt-grab/commit/46a210995298c08ec9772e470c9458462d45b067))
+
 ## [1.7.0](https://github.com/SIeepyDev/yt-grab/compare/v1.6.0...v1.7.0) (2026-04-20)
 
 
