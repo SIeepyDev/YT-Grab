@@ -1680,22 +1680,24 @@ def _send_key_combo(modifiers, vk):
         u32.keybd_event(m, 0, KEYEVENTF_KEYUP, 0)
 
 
-def _open_in_existing_explorer_as_tab(folder_path):
-    """If any Explorer window is open on Win11, focus it and add a new
-    tab pointing at folder_path via keyboard automation. Returns True
-    if a tab was sent. Best-effort: saves + restores the user's
-    clipboard around the paste. Win10 is skipped (no tab support).
+def _navigate_existing_explorer(folder_path):
+    """If any Explorer window is open, navigate it in-place to
+    folder_path via Shell.Application COM (IWebBrowserApp.Navigate2).
+    Returns True if an existing window was reused.
 
-    v1.8.1 notes: the v1.7.x timings (Ctrl+T @ 180ms, Ctrl+L @ 220ms)
-    were too aggressive -- on a lightly-loaded system the Ctrl+T would
-    fire before Explorer had settled from the activation, and the
-    subsequent Ctrl+L would land on the previous tab's address bar
-    instead of the newly-created tab's. The result was hijacking the
-    current tab to the pasted path AND spawning a new (empty) tab.
-    Remedy: bump the initial settle to 350ms and the post-Ctrl+T wait
-    to 450ms so the new tab is definitively focused before we type."""
-    if not _is_win11():
-        return False
+    This is the v1.11 replacement for the keyboard-driven Ctrl+T tab
+    macro. That approach was fundamentally fragile: it depended on
+    focus landing on Explorer (not pywebview) at exactly the right
+    moment, and depended on Explorer's new-tab animation having
+    finished before the next keystroke. On loaded systems it raced
+    and caused ghost tabs or hijacks.
+
+    The new approach is dead-simple: one Explorer window total, reused
+    for every open_folder / open_previous_folder click. Navigate2
+    changes the view synchronously; no keystrokes, no focus dance, no
+    clipboard manipulation. If the user wants BOTH Downloads and
+    Previous visible, Explorer's own Back button in the navigation
+    history still works."""
     if not sys.platform.startswith("win"):
         return False
     import ctypes
@@ -1703,54 +1705,39 @@ def _open_in_existing_explorer_as_tab(folder_path):
         ctypes.windll.ole32.CoInitializeEx(None, 0x2)
     except Exception:
         pass
-    hwnd = _find_any_explorer_hwnd()
-    if not hwnd:
-        return False
-
-    VK_CONTROL = 0x11
-    VK_RETURN  = 0x0D
-    VK_T       = 0x54
-    VK_L       = 0x4C
-    VK_V       = 0x56
-    VK_MENU    = 0x12
-
-    # Stash and later restore the user's clipboard so we don't clobber
-    # whatever they had copied.
-    saved_clip = _clipboard_get_text()
     try:
-        # Double-unlock: AllowSetForegroundWindow + Alt-keystroke so the
-        # subsequent activation sticks even though we're sending input
-        # FROM a background app holding focus.
-        try:
-            ctypes.windll.user32.AllowSetForegroundWindow(-1)
-            ctypes.windll.user32.keybd_event(VK_MENU, 0, 0, 0)
-            ctypes.windll.user32.keybd_event(VK_MENU, 0, 0x0002, 0)
-        except Exception:
-            pass
-        _activate_explorer_hwnd(hwnd, center=False)
-        # Longer settle -- lets Explorer finish activating before we
-        # start sending keystrokes, which was the race window in v1.7.x.
-        time.sleep(0.35)
-        _send_key_combo([VK_CONTROL], VK_T)      # Ctrl+T -- new tab
-        time.sleep(0.45)                         # new tab fully focused
-        _send_key_combo([VK_CONTROL], VK_L)      # Ctrl+L -- focus address bar
-        time.sleep(0.18)
-        if not _clipboard_set_text(str(folder_path)):
-            return False
-        time.sleep(0.08)
-        _send_key_combo([VK_CONTROL], VK_V)      # Ctrl+V -- paste path
-        time.sleep(0.10)
-        _send_key_combo([], VK_RETURN)           # Enter -- navigate
-        return True
+        import comtypes.client
+        shell = comtypes.client.CreateObject("Shell.Application")
+        windows = shell.Windows()
+        count = windows.Count
+        target = str(folder_path)
+        for i in range(count):
+            try:
+                w = windows.Item(i)
+                if w is None:
+                    continue
+                loc = (w.LocationURL or "").lower()
+                if not loc.startswith("file:"):
+                    continue
+                # Found a file: Explorer window. Navigate its view.
+                try:
+                    w.Navigate2(target)
+                except Exception:
+                    try:
+                        w.Navigate(target)
+                    except Exception:
+                        continue
+                try:
+                    hwnd = int(w.HWND)
+                    _activate_explorer_hwnd(hwnd, center=False)
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                continue
     except Exception:
-        return False
-    finally:
-        # Restore clipboard after Explorer's had a beat to read it.
-        if saved_clip is not None:
-            def _restore():
-                time.sleep(0.6)
-                _clipboard_set_text(saved_clip)
-            threading.Thread(target=_restore, daemon=True).start()
+        pass
+    return False
 
 
 def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
@@ -1787,18 +1774,15 @@ def api_open_previous_folder():
         target_path.mkdir(exist_ok=True)   # make sure it's there
         if sys.platform.startswith("win"):
             import ctypes
-            # Prefer reusing a window already at this exact path.
+            # Prefer reusing a window already at this exact path
+            # (no-op for the Explorer view, just focus it).
             if _focus_existing_explorer(target_path):
                 return jsonify({"ok": True, "reused": True})
-            # v1.8.1: if any OTHER Explorer window is open, add a new
-            # tab to it instead of spawning a second window. User's
-            # explicit ask: "if file explorer is open just make them as
-            # tabs so theres only ever one file explorer open." The
-            # earlier removal in v1.7.2 was a regression -- the timing
-            # glitches that caused tab-hijacking are addressed by the
-            # bumped delays in _open_in_existing_explorer_as_tab.
-            if _open_in_existing_explorer_as_tab(target_path):
-                return jsonify({"ok": True, "tab": True})
+            # v1.11: any Explorer window that's open anywhere -> reuse
+            # it by navigating its view to target_path via COM. Avoids
+            # spawning a second window and avoids the old tab macro.
+            if _navigate_existing_explorer(target_path):
+                return jsonify({"ok": True, "navigated": True})
             try:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
@@ -1844,15 +1828,14 @@ def api_open_folder():
             if _focus_existing_explorer(target_folder):
                 return jsonify({"ok": True, "reused": True})
 
-            # v1.8.1: if ANY other Explorer is open (e.g. user has
-            # another folder open), pile a new tab onto that window
-            # instead of spawning a second top-level window. Only when
-            # no Explorer at all is open do we spawn a fresh window.
-            # File-reveal case (/select) is kept as a spawn because tab
-            # navigation can't express the selection.
+            # v1.11: any Explorer window that's open anywhere -> reuse
+            # it by navigating its view to target_folder via COM
+            # (Shell.Application Navigate2). One window total, reliable,
+            # no keyboard macros. File-reveal (/select) still spawns
+            # because Navigate2 can't express the selection.
             if not target_path.is_file():
-                if _open_in_existing_explorer_as_tab(target_folder):
-                    return jsonify({"ok": True, "tab": True})
+                if _navigate_existing_explorer(target_folder):
+                    return jsonify({"ok": True, "navigated": True})
 
             # No existing window at that path. Spawn new, using the
             # focus-stealing workaround stack so Explorer comes forward
@@ -2269,6 +2252,7 @@ def _launch_pywebview():
 
             def _drag_worker(c_x0=c_x0, c_y0=c_y0, w_x0=w_x0, w_y0=w_y0):
                 try:
+                    SW_MAXIMIZE = 3
                     deadline = time.time() + 30.0  # safety cap
                     while time.time() < deadline:
                         state = ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON)
@@ -2276,6 +2260,12 @@ def _launch_pywebview():
                             break
                         pt = wintypes.POINT()
                         ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+                        # Aero-snap: cursor hit the top edge of the monitor
+                        # -> maximize and end the drag. Mirrors native
+                        # Windows behavior (drag to top = snap maximize).
+                        if pt.y <= 0:
+                            ctypes.windll.user32.ShowWindow(hwnd, SW_MAXIMIZE)
+                            break
                         new_x = w_x0 + (pt.x - c_x0)
                         new_y = w_y0 + (pt.y - c_y0)
                         ctypes.windll.user32.SetWindowPos(
