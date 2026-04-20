@@ -54,13 +54,23 @@ venv\Scripts\python.exe -m PyInstaller --clean Uninstaller.spec
 if errorlevel 1 goto err_pyinstaller_uninst
 if not exist "dist\YTGrabUninstaller.exe" goto err_nouninst
 
+REM Build the public-facing online installer / auto-updater. This is
+REM the .exe friends grab from the public github.com/SIeepyDev/YTGrab
+REM repo. Stdlib-only, ~10s, ~10MB. Output: dist\YTGrabSetup.exe
+echo.
+echo [yt-dl build] Building YTGrabSetup.exe (online installer)...
+venv\Scripts\python.exe -m PyInstaller --clean Installer.spec
+if errorlevel 1 goto err_pyinstaller_setup
+if not exist "dist\YTGrabSetup.exe" goto err_nosetup
+
 echo ==================================================
 echo [yt-dl build] DONE
 echo.
-echo   Your exe:        %cd%\dist\YTGrab.exe
+echo   App:             %cd%\dist\YTGrab.exe
 echo   Uninstaller:     %cd%\dist\YTGrabUninstaller.exe
+echo   Online setup:    %cd%\dist\YTGrabSetup.exe
 echo.
-echo   Send the single .exe to your friend. No Python needed on their end.
+echo   Run release.bat to publish all three to the public repo.
 echo   First launch may take 5-10 seconds as Windows unpacks it.
 echo   Windows Defender may warn -- click "More info" then "Run anyway".
 echo ==================================================
@@ -119,6 +129,20 @@ goto end
 echo.
 echo [yt-dl build] ERROR: build completed without producing dist\YTGrabUninstaller.exe.
 echo [yt-dl build] Check the PyInstaller output above for the uninstaller pass.
+pause
+goto end
+
+:err_pyinstaller_setup
+echo.
+echo [yt-dl build] ERROR: PyInstaller failed on Installer.spec.
+echo [yt-dl build] Scroll up for the real error.
+pause
+goto end
+
+:err_nosetup
+echo.
+echo [yt-dl build] ERROR: build completed without producing dist\YTGrabSetup.exe.
+echo [yt-dl build] Check the PyInstaller output above for the setup pass.
 pause
 goto end
 
