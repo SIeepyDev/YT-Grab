@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/SIeepyDev/yt-grab/compare/v1.11.0...v1.12.0) (2026-04-20)
+
+
+### Features
+
+* single-window Explorer (close old before spawn) + drag-to-top maximize ([6e5c993](https://github.com/SIeepyDev/yt-grab/commit/6e5c993b6c339f78aa965ec5904791e8ad3152f3))
+
 ## [1.11.0](https://github.com/SIeepyDev/yt-grab/compare/v1.10.0...v1.11.0) (2026-04-20)
 
 
