@@ -28,12 +28,13 @@ A clean, local-first YouTube downloader for Windows. Native desktop window, prem
 
 ## Screenshots
 
-| Dark | Light |
-|---|---|
-| ![dark mode, sidebars closed](screenshots/layout-dark.png) | ![light mode, sidebars closed](screenshots/layout-light.png) |
-| ![dark mode, sidebars open](screenshots/layout-dark-expanded.png) | ![light mode, sidebars open](screenshots/layout-light-expanded.png) |
+|  | Dark | Light |
+|---|---|---|
+| **Default view** | ![dark, sidebars closed](screenshots/layout-dark.png) | ![light, sidebars closed](screenshots/layout-light.png) |
+| **Settings (left sidebar)** | ![dark, settings open](screenshots/sidebar-left-dark.png) | ![light, settings open](screenshots/sidebar-left-light.png) |
+| **Themes (right sidebar)** | ![dark, themes open](screenshots/sidebar-right-dark.png) | ![light, themes open](screenshots/sidebar-right-light.png) |
 
-Left: default view with the three-column workspace (History · Paste + Previous Downloads · Active queue) and the title-bar mode toggle next to the brand. Right: same layout in light mode. Bottom row shows both sidebars expanded — Settings (accent HSV ring, density, a11y) on the left, Themes (background, gradient, typography, glass, saved views) on the right.
+Default view shows the three-column workspace (History · Paste + Previous Downloads · Active queue) with the title-bar mode toggle to the right of the brand. Settings sidebar exposes the accent-color HSV ring, density, and the three iOS-style toggles (hide hints, dyslexia-friendly font, high contrast). Themes sidebar carries the visual dials — Background · Gradient · Typography · Glass · Saved views.
 
 ## Quick start (source mode, dev-friendly)
 
