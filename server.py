@@ -1680,64 +1680,12 @@ def _send_key_combo(modifiers, vk):
         u32.keybd_event(m, 0, KEYEVENTF_KEYUP, 0)
 
 
-def _navigate_existing_explorer(folder_path):
-    """If any Explorer window is open, navigate it in-place to
-    folder_path via Shell.Application COM (IWebBrowserApp.Navigate2).
-    Returns True if an existing window was reused.
-
-    This is the v1.11 replacement for the keyboard-driven Ctrl+T tab
-    macro. That approach was fundamentally fragile: it depended on
-    focus landing on Explorer (not pywebview) at exactly the right
-    moment, and depended on Explorer's new-tab animation having
-    finished before the next keystroke. On loaded systems it raced
-    and caused ghost tabs or hijacks.
-
-    The new approach is dead-simple: one Explorer window total, reused
-    for every open_folder / open_previous_folder click. Navigate2
-    changes the view synchronously; no keystrokes, no focus dance, no
-    clipboard manipulation. If the user wants BOTH Downloads and
-    Previous visible, Explorer's own Back button in the navigation
-    history still works."""
-    if not sys.platform.startswith("win"):
-        return False
-    import ctypes
-    try:
-        ctypes.windll.ole32.CoInitializeEx(None, 0x2)
-    except Exception:
-        pass
-    try:
-        import comtypes.client
-        shell = comtypes.client.CreateObject("Shell.Application")
-        windows = shell.Windows()
-        count = windows.Count
-        target = str(folder_path)
-        for i in range(count):
-            try:
-                w = windows.Item(i)
-                if w is None:
-                    continue
-                loc = (w.LocationURL or "").lower()
-                if not loc.startswith("file:"):
-                    continue
-                # Found a file: Explorer window. Navigate its view.
-                try:
-                    w.Navigate2(target)
-                except Exception:
-                    try:
-                        w.Navigate(target)
-                    except Exception:
-                        continue
-                try:
-                    hwnd = int(w.HWND)
-                    _activate_explorer_hwnd(hwnd, center=False)
-                except Exception:
-                    pass
-                return True
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return False
+# v1.11.1: removed _navigate_existing_explorer (the Navigate2 COM
+# approach from v1.11). Win11 File Explorer doesn't implement it
+# reliably -- calls either silently no-op, hijack the wrong window,
+# or leave Explorer in a state where subsequent spawns also fail.
+# If a better "reuse a single window" approach becomes viable, it
+# goes here.
 
 
 def _focus_newly_spawned_explorer(folder_path, timeout_sec=3.0):
@@ -1774,15 +1722,15 @@ def api_open_previous_folder():
         target_path.mkdir(exist_ok=True)   # make sure it's there
         if sys.platform.startswith("win"):
             import ctypes
-            # Prefer reusing a window already at this exact path
-            # (no-op for the Explorer view, just focus it).
+            # Prefer reusing a window already at this exact path.
+            # v1.11.1: the Navigate2 COM approach from v1.11 broke
+            # File Explorer on Win11 (method isn't reliably implemented
+            # on modern Explorer). Back to focus-only: if the exact
+            # folder is already open, bring it forward; otherwise spawn
+            # a fresh window. Multiple windows is acceptable, silent
+            # failure is not.
             if _focus_existing_explorer(target_path):
                 return jsonify({"ok": True, "reused": True})
-            # v1.11: any Explorer window that's open anywhere -> reuse
-            # it by navigating its view to target_path via COM. Avoids
-            # spawning a second window and avoids the old tab macro.
-            if _navigate_existing_explorer(target_path):
-                return jsonify({"ok": True, "navigated": True})
             try:
                 ctypes.windll.user32.AllowSetForegroundWindow(-1)
                 ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
@@ -1825,17 +1773,11 @@ def api_open_folder():
 
             # Try to reuse an already-open Explorer window at this folder.
             # If yes, we're done -- no new window spawned.
+            # v1.11.1: reverted the cross-window Navigate2 reuse from
+            # v1.11. Navigate2 on Win11 File Explorer either no-ops or
+            # hijacks the wrong window. Focus-only is reliable.
             if _focus_existing_explorer(target_folder):
                 return jsonify({"ok": True, "reused": True})
-
-            # v1.11: any Explorer window that's open anywhere -> reuse
-            # it by navigating its view to target_folder via COM
-            # (Shell.Application Navigate2). One window total, reliable,
-            # no keyboard macros. File-reveal (/select) still spawns
-            # because Navigate2 can't express the selection.
-            if not target_path.is_file():
-                if _navigate_existing_explorer(target_folder):
-                    return jsonify({"ok": True, "navigated": True})
 
             # No existing window at that path. Spawn new, using the
             # focus-stealing workaround stack so Explorer comes forward
