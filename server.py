@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory, Response
+import yt_dlp
 
 # ---------------------------------------------------------------------------
 # Paths + setup
@@ -1564,19 +1565,23 @@ def _close_our_explorer():
 
 def _activate_explorer_hwnd(hwnd, center=False):
     """Bring an Explorer window to foreground. If center=True, also
-    resize+center it on the primary monitor (for newly-spawned windows)."""
+    resize+center it on the primary monitor (for newly-spawned windows).
+
+    v1.16.2: removed the synthesized Alt keystroke and BringWindowToTop.
+    Alt went to whatever window had focus globally -- if another Explorer
+    was momentarily focused, its menu bar activated and flashed. And
+    BringWindowToTop cascades z-order across sibling top-level windows,
+    which repaints/flashes other open Explorer windows. pywebview is
+    already the foreground window at click time, so AllowSetForegroundWindow
+    + SetForegroundWindow is enough and touches only our target hwnd."""
     if not hwnd:
         return
     try:
         import ctypes
-        # Alt-keystroke trick unlocks focus-stealing prevention for this process
         ctypes.windll.user32.AllowSetForegroundWindow(-1)
-        ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
-        ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0)
         # SW_RESTORE = 9 (un-minimize if minimized)
         ctypes.windll.user32.ShowWindow(hwnd, 9)
         ctypes.windll.user32.SetForegroundWindow(hwnd)
-        ctypes.windll.user32.BringWindowToTop(hwnd)
     except Exception:
         pass
     if center:
@@ -1818,9 +1823,10 @@ def _spawn_and_track_explorer(target_path, is_file_reveal=False):
     import ctypes
     before = _snapshot_explorer_hwnds()
     try:
+        # v1.16.2: dropped the Alt keydown/keyup. It fed the key to
+        # whatever window had focus globally, so any other open
+        # Explorer window would flash its menu bar.
         ctypes.windll.user32.AllowSetForegroundWindow(-1)
-        ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)        # VK_MENU down
-        ctypes.windll.user32.keybd_event(0x12, 0, 0x0002, 0)   # VK_MENU up
     except Exception:
         pass
     if is_file_reveal:
