@@ -8,6 +8,10 @@ A clean, local-first YouTube downloader for Windows. Native desktop window, prem
 [![latest release](https://img.shields.io/github/v/release/SIeepyDev/yt-grab?label=release&color=purple)](https://github.com/SIeepyDev/yt-grab/releases/latest)
 ![release date](https://img.shields.io/github/release-date/SIeepyDev/yt-grab?color=blueviolet)
 
+<p align="center">
+  <img src="screenshots/layout-dark.png" alt="YT Grab — dark mode, three-column workspace" width="820">
+</p>
+
 ## Features
 
 - **Three-column workspace** — History (files on disk) on the left, paste + format picker in the middle with your Previous Downloads log beneath, and the Active queue on the right that fills the moment you hit download.
@@ -21,6 +25,15 @@ A clean, local-first YouTube downloader for Windows. Native desktop window, prem
 - **Title-bar mode toggle** — one-click cycle between Dark · Light · System without opening a panel. Icon swaps between moon · sun · monitor to match.
 - **Left sidebar Settings** — accent color (HSV ring + hex), density, dyslexia-friendly font, high-contrast mode, hide-hints toggle, and Reset all settings. Everything persists across sessions via WebView2 localStorage, pinned to `%LOCALAPPDATA%\YTGrab\webview` so it survives renaming or moving the exe.
 - **Native Windows integration** — pinned Start Menu + Desktop shortcuts, own taskbar identity, WebView2 under the hood (no Chrome required).
+
+## Screenshots
+
+| Dark | Light |
+|---|---|
+| ![dark mode, sidebars closed](screenshots/layout-dark.png) | ![light mode, sidebars closed](screenshots/layout-light.png) |
+| ![dark mode, sidebars open](screenshots/layout-dark-expanded.png) | ![light mode, sidebars open](screenshots/layout-light-expanded.png) |
+
+Left: default view with the three-column workspace (History · Paste + Previous Downloads · Active queue) and the title-bar mode toggle next to the brand. Right: same layout in light mode. Bottom row shows both sidebars expanded — Settings (accent HSV ring, density, a11y) on the left, Themes (background, gradient, typography, glass, saved views) on the right.
 
 ## Quick start (source mode, dev-friendly)
 
