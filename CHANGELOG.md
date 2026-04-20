@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.2](https://github.com/SIeepyDev/YT-Grab/compare/v1.16.1...v1.16.2) (2026-04-20)
+
+
+### Bug Fixes
+
+* stop folder buttons flashing other Explorer windows ([3f8fd99](https://github.com/SIeepyDev/YT-Grab/commit/3f8fd996aeafb0ee2a044a16c113f40a62dcde98))
+
 ## [1.16.1](https://github.com/SIeepyDev/YT-Grab/compare/v1.16.0...v1.16.1) (2026-04-20)
 
 
