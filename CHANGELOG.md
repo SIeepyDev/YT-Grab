@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.17.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.16.2...v1.17.0) (2026-04-23)
+
+
+### Features
+
+* ship single YTGrab.exe installer with bundled app + uninstaller ([2cd61d7](https://github.com/SIeepyDev/YT-Grab/commit/2cd61d7660b4dd0b64f9d82268f846eddf7404b3))
+
+
+### Bug Fixes
+
+* ignore pre-release suffix in update-check compare ([cacd4d6](https://github.com/SIeepyDev/YT-Grab/commit/cacd4d62fd0c58b8333dcacd9ef82d088c104545))
+
 ## [1.16.2](https://github.com/SIeepyDev/YT-Grab/compare/v1.16.1...v1.16.2) (2026-04-20)
 
 
