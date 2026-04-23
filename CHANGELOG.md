@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.17.0...v1.18.0) (2026-04-23)
+
+
+### Features
+
+* YTGrab.exe is the app itself, no wrapper or inner exe ([e244d6d](https://github.com/SIeepyDev/YT-Grab/commit/e244d6d928d90c2f379412fc43c4c3e8d3a0ddcc))
+
 ## [1.17.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.16.2...v1.17.0) (2026-04-23)
 
 
