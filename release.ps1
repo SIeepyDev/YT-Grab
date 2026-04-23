@@ -6,19 +6,16 @@ a matching vX.Y.Z release on the public distribution repo
     github.com/SIeepyDev/YT-Grab
 
 then uploads TWO build artifacts as release assets:
-    dist\YTGrab.exe              -- the one everyone downloads. Bundles
-                                    YTGrabApp.exe + YTGrabUninstaller.exe
-                                    internally and installs them to
-                                    %LOCALAPPDATA%\Programs\YTGrab.
-    dist\YTGrabUninstaller.exe   -- posted as a separate asset so users
-                                    who need it (lost shortcut, messed-up
-                                    install, anything) can grab it
-                                    directly without digging through the
-                                    install folder.
+    dist\YTGrab.exe              -- the app. Single file; handles its
+                                    own first-run install and
+                                    self-update on every launch.
+    dist\YTGrabUninstaller.exe   -- standalone uninstaller. Fetched by
+                                    YTGrab.exe on first install, also
+                                    posted separately so users can grab
+                                    it directly if they need to.
 
-YTGrabApp.exe stays an intermediate artifact and is NOT uploaded -- it
-lives inside YTGrab.exe. YTGrabSetup.exe is gone (merged into YTGrab.exe
-as of v1.17).
+As of v1.18 there is no standalone installer or wrapper binary --
+YTGrab.exe IS the app.
 
 Auth: set $env:GH_PAT to a personal access token with `repo` scope on
 the public repo (classic PAT or fine-grained with Contents:RW).
@@ -150,15 +147,15 @@ YT Grab $tag
 
 ## Install or update
 
-Download **YTGrab.exe** below, double-click, done. It installs YT Grab to ``%LOCALAPPDATA%\Programs\YTGrab`` and creates Desktop + Start Menu shortcuts (one for the app, one for uninstall).
+Download **YTGrab.exe** below and double-click it. On first run it installs itself to ``%LOCALAPPDATA%\Programs\YTGrab``, drops the uninstaller next to it, and creates Desktop + Start Menu shortcuts. Every launch after that does a silent update check and self-replaces if a newer version is available.
 
 ## Files in this release
 
-- **YTGrab.exe** — the installer. Download this. Bundles the app and uninstaller internally.
+- **YTGrab.exe** — the app itself. Download this.
 - **YTGrabUninstaller.exe** — standalone uninstaller. You only need it if something went sideways and you can't find the "Uninstall YT Grab" shortcut. Run it from any folder and it will clean up.
 - ``Source code (zip)`` / ``Source code (tar.gz)`` — auto-attached by GitHub for developers. Regular users can ignore these.
 
-See the [README](https://github.com/$Owner/$Repo) for install notes and the Smart App Control workaround.
+See the [README](https://github.com/$Owner/$Repo) for notes and the Smart App Control workaround.
 "@
 
     $createPayload = @{

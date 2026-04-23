@@ -85,13 +85,12 @@ For full metadata + thumbnail embedding, run `fetch_ffmpeg.bat` once — it down
 .\build.bat
 ```
 
-Runs three PyInstaller passes in order and leaves three files in `dist\`:
+Runs two PyInstaller passes and leaves two files in `dist\`:
 
 | File | Purpose |
 |---|---|
-| `YTGrabApp.exe` | The real Flask + pywebview app. Intermediate — bundled into `YTGrab.exe` below. Not a release asset. |
-| `YTGrabUninstaller.exe` | Standalone tkinter uninstaller. Intermediate — bundled into `YTGrab.exe`. Not a release asset. |
-| `YTGrab.exe` | **The single public download.** Bundles the two above as PyInstaller data resources, handles install + auto-update + shortcut creation. About 60-70 MB. |
+| `YTGrab.exe` | **The app.** Single file. On first run it installs itself to `%LOCALAPPDATA%\Programs\YTGrab`, fetches the uninstaller from the GitHub release, creates shortcuts, then runs. Every subsequent launch does a silent update check and self-replaces if a newer release is out. About 60 MB. |
+| `YTGrabUninstaller.exe` | Standalone tkinter uninstaller. YTGrab.exe downloads this during the first-run install; it's also posted as its own release asset so users who lose their shortcut can grab it directly. |
 
 ```powershell
 .\package.bat
@@ -109,13 +108,13 @@ Windows 11's Smart App Control (SAC) blocks unsigned PyInstaller binaries on som
 |---|---|
 | `server.py` | Flask backend + pywebview native window. Download pipeline, history, Explorer integration, Windows shortcut + taskbar branding. |
 | `index.html` | Entire UI — HTML + CSS + JS in one file for simplicity. Dark theme with accent color CSS vars driven by the settings panel. |
-| `installer.py` + `Installer.spec` | The outer `YTGrab.exe` (the single public download). Tkinter installer + auto-updater that bundles `YTGrabApp.exe` and `YTGrabUninstaller.exe` as data resources. |
-| `uninstaller.py` + `Uninstaller.spec` | Standalone tkinter uninstaller built into `dist\YTGrabUninstaller.exe`, then bundled inside `YTGrab.exe`. |
-| `YTGrab.spec` | PyInstaller spec for the inner `YTGrabApp.exe`. `console=False`, bundles icon + index.html + ffmpeg. |
+| `installer.py` | Helper module imported by `server.py` at startup. Provides `bootstrap_or_update()` — on first run it installs the running `YTGrab.exe` to `%LOCALAPPDATA%`, fetches the uninstaller from the latest GitHub release, and creates shortcuts; on subsequent runs it does a quick update check and self-replaces if a newer release is out. No separate installer binary. |
+| `uninstaller.py` + `Uninstaller.spec` | Standalone tkinter uninstaller built into `dist\YTGrabUninstaller.exe`. Shipped as its own release asset and dropped into the install folder on first run. |
+| `YTGrab.spec` | PyInstaller spec for the single `YTGrab.exe`. `console=False`, bundles icon + index.html + ffmpeg + the installer helper module. |
 | `launch.bat` | Verbose launcher (creates venv, installs reqs, kills zombie ports). |
 | `launch.vbs` | Silent launcher. Default entry point for users. |
 | `fetch_ffmpeg.bat` | One-time fetch of the full ffmpeg build (for thumbnail/metadata embed). |
-| `build.bat` + `build_icon.py` | Three-pass build pipeline: `YTGrabApp.exe` → `YTGrabUninstaller.exe` → single `YTGrab.exe`. |
+| `build.bat` + `build_icon.py` | Two-pass build pipeline: `YTGrab.exe` → `YTGrabUninstaller.exe`. |
 | `package.bat` | Wraps the single `YTGrab.exe` plus a source fallback into a shippable zip. |
 | `clean.bat` | Factory reset — wipes venv, dist, bin, downloads, history. |
 | `release.bat` / `release.ps1` | After `build.bat`, uploads `dist\YTGrab.exe` and `dist\YTGrabUninstaller.exe` as release assets. Requires `GH_PAT`. |
@@ -165,7 +164,7 @@ Shipping is automated by [release-please](https://github.com/googleapis/release-
 
 > Note: the commit format is enforced by convention, not tooling — release-please silently ignores commits that don't match, and those changes won't appear in the next changelog. Keep subjects ≤50 characters, imperative mood, no trailing period.
 
-After release-please publishes the Release, run `.\build.bat` then `.\release.bat` (requires `GH_PAT`) to attach `YTGrab.exe` and `YTGrabUninstaller.exe` as downloadable assets. The intermediate `YTGrabApp.exe` stays in `dist\` and does not get uploaded — it lives inside `YTGrab.exe`.
+After release-please publishes the Release, run `.\build.bat` then `.\release.bat` (requires `GH_PAT`) to attach `YTGrab.exe` and `YTGrabUninstaller.exe` as downloadable assets.
 
 ## Privacy
 

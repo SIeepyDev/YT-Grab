@@ -153,15 +153,15 @@ class UninstallerWorker:
 
     def _kill_process(self):
         self.status("Stopping YT Grab...")
-        # Kill both the new split (YTGrab.exe outer shell +
-        # YTGrabApp.exe inner app) AND the legacy 1.16 single-exe +
-        # standalone-setup pair (YTGrab.exe + YTGrabSetup.exe). Doing
-        # both here means this uninstaller works as a drop-in on any
-        # install layout the public release has ever had.
+        # v1.18+ has just one app process: YTGrab.exe. Legacy names
+        # (YTGrabApp.exe from v1.17's bundled-wrapper and
+        # YTGrabSetup.exe from pre-1.17 standalone updater) are still
+        # in the list so this uninstaller cleans up cleanly on older
+        # installs without the user knowing which version they were on.
         for image in (
-            "YTGrabApp.exe",      # v1.17+ inner app
-            "YTGrab.exe",         # v1.17+ outer shell / legacy Flask app
-            "YTGrabSetup.exe",    # legacy standalone updater
+            "YTGrab.exe",          # the app (v1.18+, and legacy Flask app <=1.16)
+            "YTGrabApp.exe",       # v1.17 bundled-wrapper intermediate
+            "YTGrabSetup.exe",     # pre-1.17 standalone updater
         ):
             try:
                 subprocess.run(

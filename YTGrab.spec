@@ -1,13 +1,14 @@
-# PyInstaller spec for the YT Grab inner app onefile build.
+# PyInstaller spec for YT Grab.
 #
-# Produces dist/YTGrabApp.exe -- a single-file Windows executable that
-# embeds Python, all deps, index.html, and ffmpeg.exe (via imageio-ffmpeg).
-# This binary is NOT the one friends download. It is bundled as a data
-# resource inside the single public YTGrab.exe (see Installer.spec), which
-# extracts it to the install folder on first run and on every update.
+# Produces dist/YTGrab.exe -- the single public download. One .exe
+# IS the app: on first run it installs itself to %LOCALAPPDATA%,
+# fetches YTGrabUninstaller.exe from the GitHub release to sit next
+# to it, creates shortcuts, and launches. On subsequent launches it
+# does a silent update check and self-replaces if a newer release
+# is available, then runs the normal Flask + pywebview UI.
 #
 # Build with:    build.bat
-# Run with:      never directly -- launched by the outer YTGrab.exe
+# Run with:      double-click dist\YTGrab.exe
 
 # -*- mode: python ; coding: utf-8 -*-
 
@@ -35,6 +36,10 @@ hidden += ['webview.platforms.edgechromium', 'webview.platforms.mshtml',
            'webview.platforms.winforms']
 # comtypes is used for the Explorer-window-reuse check.
 hidden += collect_submodules('comtypes')
+# installer.py provides bootstrap_or_update() -- make sure PyInstaller
+# pulls it in (server.py imports it lazily inside __main__ so static
+# analysis can miss it).
+hidden += ['installer']
 
 # Bundle the imageio-ffmpeg package's binary ffmpeg.exe. The package
 # includes it under imageio_ffmpeg/binaries/ -- collect_data_files pulls
@@ -70,8 +75,11 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Trim fat we never use to keep the exe smaller.
-        'tkinter', 'matplotlib', 'numpy', 'PIL', 'pandas', 'scipy',
+        # Trim fat we never use to keep the exe smaller.  Note we do
+        # NOT exclude tkinter -- the install / update GUI in
+        # installer.py uses it. The 1-2MB tkinter costs is negligible
+        # against the pywebview/yt-dlp base.
+        'matplotlib', 'numpy', 'PIL', 'pandas', 'scipy',
         'IPython', 'jupyter', 'notebook', 'pytest', 'sphinx',
     ],
     noarchive=False,
@@ -85,7 +93,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='YTGrabApp',
+    name='YTGrab',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

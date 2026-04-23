@@ -2747,8 +2747,7 @@ def _launch_pywebview():
         # reliably across restarts -- and survives renaming or moving
         # the exe. Without an explicit path, WebView2 derives one from
         # the process name, which drifts between `python server.py` and
-        # packaged builds (and again between YTGrab.exe and YTGrabApp.exe
-        # after the v1.17 installer rename). Pinning absorbs all of it.
+        # packaged YTGrab.exe builds. Pinning absorbs all of it.
         # private_mode=False is also required; private mode uses an
         # in-memory storage profile that vanishes on exit regardless of
         # storage_path.
@@ -2820,6 +2819,26 @@ def _focus_existing_instance():
 
 
 if __name__ == "__main__":
+    # Bootstrap: if this is a fresh YTGrab.exe double-clicked from
+    # Downloads, installer.bootstrap_or_update() will install us to
+    # %LOCALAPPDATA%\Programs\YTGrab, fetch the uninstaller from the
+    # GitHub release, create shortcuts, spawn the installed copy, and
+    # schedule self-delete of the source. If we're ALREADY the installed
+    # copy it does a quick update check and swaps the exe in place when
+    # a newer release exists. In either of those branches it returns
+    # False and the caller exits -- the app run below is for the
+    # normal "installed and up to date" case (and source-mode dev).
+    try:
+        from installer import bootstrap_or_update
+        if not bootstrap_or_update():
+            sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception:
+        # Never let a bootstrap failure block the app from launching.
+        import traceback as _tb
+        _tb.print_exc()
+
     # Second-instance guard: if YT Grab is already running, focus
     # its existing window and exit. If the port is in use but no window
     # can be found, we've got a zombie from a prior close that hasn't
