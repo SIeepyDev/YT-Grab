@@ -30,7 +30,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory, Response
+from flask import Flask, jsonify, request, send_from_directory
 import yt_dlp
 
 # ---------------------------------------------------------------------------
@@ -1859,7 +1859,6 @@ def api_open_previous_folder():
     try:
         target_path.mkdir(exist_ok=True)   # make sure it's there
         if sys.platform.startswith("win"):
-            import ctypes
             # v1.12.1: if ANY Explorer window is already at this exact
             # path, focus it and adopt it as ours. Any previously-
             # tracked window at a DIFFERENT path gets closed so we
@@ -2119,7 +2118,6 @@ def api_open_folder():
         return jsonify({"ok": False, "error": "path not found"}), 404
     try:
         if sys.platform.startswith("win"):
-            import ctypes
             target_folder = target_path.parent if target_path.is_file() else target_path
 
             # v1.12.1: if ANY Explorer window is already at this folder
@@ -2206,7 +2204,7 @@ def _set_shortcut_aumid(lnk_path, app_id):
         return
     try:
         import ctypes
-        from ctypes import wintypes, c_void_p, c_wchar_p
+        from ctypes import wintypes, c_void_p
 
         class GUID(ctypes.Structure):
             _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
@@ -2748,11 +2746,12 @@ def _launch_pywebview():
         # so localStorage (theme settings, saved views, etc.) persists
         # reliably across restarts -- and survives renaming or moving
         # the exe. Without an explicit path, WebView2 derives one from
-        # the process name, which drifts between `python server.py`
-        # and packaged YTGrab.exe builds and effectively amnesia-bombs
-        # users on their first packaged launch. private_mode=False is
-        # also required; private mode uses an in-memory storage profile
-        # that vanishes on exit regardless of storage_path.
+        # the process name, which drifts between `python server.py` and
+        # packaged builds (and again between YTGrab.exe and YTGrabApp.exe
+        # after the v1.17 installer rename). Pinning absorbs all of it.
+        # private_mode=False is also required; private mode uses an
+        # in-memory storage profile that vanishes on exit regardless of
+        # storage_path.
         storage_dir = os.path.join(
             os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
             "YTGrab", "webview"

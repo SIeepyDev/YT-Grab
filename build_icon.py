@@ -9,7 +9,6 @@ Handles non-square inputs by padding with a transparent background --
 the icon stays centered and its proportions are preserved.
 """
 
-import os
 import sys
 from pathlib import Path
 
