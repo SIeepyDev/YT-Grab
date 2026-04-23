@@ -5633,8 +5633,13 @@
   // rate-limit -- we never toast an error for this.
   // ---------------------------------------------------------------------------
   function _isNewerVersion(latest, current) {
-    const a = String(latest).split('.').map(n => parseInt(n, 10) || 0);
-    const b = String(current).split('.').map(n => parseInt(n, 10) || 0);
+    // Strip any pre-release/build suffix ('-rc1', '+meta') so we compare
+    // base semver only. Prevents 1.17.0-rc1 from being treated as newer
+    // (or different) than 1.17.0 stable -- notify-only banner should
+    // only fire on a genuinely higher base version.
+    const stripSuffix = (v) => String(v).split(/[-+]/)[0];
+    const a = stripSuffix(latest).split('.').map(n => parseInt(n, 10) || 0);
+    const b = stripSuffix(current).split('.').map(n => parseInt(n, 10) || 0);
     for (let i = 0; i < Math.max(a.length, b.length); i++) {
       const x = a[i] || 0, y = b[i] || 0;
       if (x > y) return true;
