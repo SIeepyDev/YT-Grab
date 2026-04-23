@@ -153,7 +153,16 @@ class UninstallerWorker:
 
     def _kill_process(self):
         self.status("Stopping YT Grab...")
-        for image in ("YTGrab.exe",):
+        # Kill both the new split (YTGrab.exe outer shell +
+        # YTGrabApp.exe inner app) AND the legacy 1.16 single-exe +
+        # standalone-setup pair (YTGrab.exe + YTGrabSetup.exe). Doing
+        # both here means this uninstaller works as a drop-in on any
+        # install layout the public release has ever had.
+        for image in (
+            "YTGrabApp.exe",      # v1.17+ inner app
+            "YTGrab.exe",         # v1.17+ outer shell / legacy Flask app
+            "YTGrabSetup.exe",    # legacy standalone updater
+        ):
             try:
                 subprocess.run(
                     ["taskkill", "/F", "/IM", image],
@@ -277,6 +286,8 @@ class UninstallerWorker:
             "Start-Sleep -Seconds 2; "
             # Belt + suspenders: re-kill anything still holding files.
             "Stop-Process -Name YTGrab -Force 2>$null; "
+            "Stop-Process -Name YTGrabApp -Force 2>$null; "
+            "Stop-Process -Name YTGrabSetup -Force 2>$null; "
             "Stop-Process -Name YTGrabUninstaller -Force 2>$null; "
             "Start-Sleep -Milliseconds 500; "
             # Retry loop: handles released asynchronously, so we poll.

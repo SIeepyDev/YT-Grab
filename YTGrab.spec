@@ -1,10 +1,13 @@
-# PyInstaller spec for YT Grab onefile build.
+# PyInstaller spec for the YT Grab inner app onefile build.
 #
-# Produces dist/YTGrab.exe -- a single-file Windows executable that
+# Produces dist/YTGrabApp.exe -- a single-file Windows executable that
 # embeds Python, all deps, index.html, and ffmpeg.exe (via imageio-ffmpeg).
+# This binary is NOT the one friends download. It is bundled as a data
+# resource inside the single public YTGrab.exe (see Installer.spec), which
+# extracts it to the install folder on first run and on every update.
 #
 # Build with:    build.bat
-# Run with:      double-click dist\YTGrab.exe
+# Run with:      never directly -- launched by the outer YTGrab.exe
 
 # -*- mode: python ; coding: utf-8 -*-
 
@@ -82,7 +85,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='YTGrab',
+    name='YTGrabApp',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

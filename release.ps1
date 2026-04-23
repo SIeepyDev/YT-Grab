@@ -2,18 +2,23 @@
 YT Grab -- public release publisher.
 
 Reads the current version from .release-please-manifest.json and cuts
-a matching vX.Y.Z release on the PUBLIC distribution repo
-    github.com/SIeepyDev/YTGrab
+a matching vX.Y.Z release on the public distribution repo
+    github.com/SIeepyDev/YT-Grab
 
-then uploads the three build artifacts as release assets:
-    dist\YTGrab.exe
-    dist\YTGrabUninstaller.exe
-    dist\YTGrabSetup.exe
+then uploads TWO build artifacts as release assets:
+    dist\YTGrab.exe              -- the one everyone downloads. Bundles
+                                    YTGrabApp.exe + YTGrabUninstaller.exe
+                                    internally and installs them to
+                                    %LOCALAPPDATA%\Programs\YTGrab.
+    dist\YTGrabUninstaller.exe   -- posted as a separate asset so users
+                                    who need it (lost shortcut, messed-up
+                                    install, anything) can grab it
+                                    directly without digging through the
+                                    install folder.
 
-The private development repo (SIeepyDev/yt-grab) is untouched -- it
-stays source-only. release-please still cuts versioned release PRs
-there as normal. This script only publishes binaries to the public
-channel your friends install from.
+YTGrabApp.exe stays an intermediate artifact and is NOT uploaded -- it
+lives inside YTGrab.exe. YTGrabSetup.exe is gone (merged into YTGrab.exe
+as of v1.17).
 
 Auth: set $env:GH_PAT to a personal access token with `repo` scope on
 the public repo (classic PAT or fine-grained with Contents:RW).
@@ -68,12 +73,11 @@ if ([string]::IsNullOrWhiteSpace($version)) {
 $tag = "v$version"
 Info "Version: $version (tag $tag)"
 
-# Check build artifacts exist.
+# Check shippable build artifacts exist.
 $distDir = Join-Path $repoRoot "dist"
 $assets = @(
     (Join-Path $distDir "YTGrab.exe"),
-    (Join-Path $distDir "YTGrabUninstaller.exe"),
-    (Join-Path $distDir "YTGrabSetup.exe")
+    (Join-Path $distDir "YTGrabUninstaller.exe")
 )
 foreach ($a in $assets) {
     if (-not (Test-Path $a)) {
@@ -144,9 +148,17 @@ if (-not $release) {
     $releaseBody = @"
 YT Grab $tag
 
-Download **YTGrabSetup.exe** below to install or update.
+## Install or update
 
-See the [README](https://github.com/$Owner/$Repo) for install steps and notes on Smart App Control.
+Download **YTGrab.exe** below, double-click, done. It installs YT Grab to ``%LOCALAPPDATA%\Programs\YTGrab`` and creates Desktop + Start Menu shortcuts (one for the app, one for uninstall).
+
+## Files in this release
+
+- **YTGrab.exe** — the installer. Download this. Bundles the app and uninstaller internally.
+- **YTGrabUninstaller.exe** — standalone uninstaller. You only need it if something went sideways and you can't find the "Uninstall YT Grab" shortcut. Run it from any folder and it will clean up.
+- ``Source code (zip)`` / ``Source code (tar.gz)`` — auto-attached by GitHub for developers. Regular users can ignore these.
+
+See the [README](https://github.com/$Owner/$Repo) for install notes and the Smart App Control workaround.
 "@
 
     $createPayload = @{

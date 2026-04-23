@@ -2,8 +2,9 @@
 REM YT Grab -- packaging script.
 REM
 REM Produces dist\YTGrab.zip -- a shippable archive containing:
-REM   1. YTGrab.exe (the PyInstaller build) -- for friends on older
-REM      Windows or with Smart App Control off
+REM   1. YTGrab.exe (the single-file installer that bundles the app +
+REM      uninstaller) -- for friends on older Windows or with Smart
+REM      App Control off
 REM   2. source\ subfolder with launch.bat + all .py/.html/.txt -- fallback
 REM      that works on ANY Windows machine (requires Python 3.9+)
 REM   3. FRIEND_README.txt explaining both paths
@@ -14,7 +15,6 @@ setlocal enableextensions enabledelayedexpansion
 cd /d "%~dp0"
 
 if not exist "dist\YTGrab.exe" goto err_noexe
-if not exist "dist\YTGrabUninstaller.exe" goto err_nouninst
 
 REM Clean any previous package staging + zip
 if exist "dist\YTGrab-pkg" rmdir /s /q "dist\YTGrab-pkg"
@@ -24,14 +24,10 @@ echo [yt-dl pkg] Staging package contents...
 mkdir "dist\YTGrab-pkg"
 mkdir "dist\YTGrab-pkg\source"
 
-REM Copy the exe to the package root
+REM Copy the single installer exe to the package root. It bundles the
+REM real app AND the standalone uninstaller as data resources, so the
+REM friend gets both after running it once.
 copy /y "dist\YTGrab.exe" "dist\YTGrab-pkg\YTGrab.exe" >nul
-
-REM Bundle the standalone uninstaller alongside the .exe so users can
-REM cleanly remove app data (%LOCALAPPDATA%\YTGrab), shortcuts, and the
-REM install folder in one click. .exe instead of .bat so users don't
-REM have to right-click a batch file.
-copy /y "dist\YTGrabUninstaller.exe" "dist\YTGrab-pkg\YTGrabUninstaller.exe" >nul
 
 REM Copy source fallback files. venv and dist are excluded (recipient
 REM recreates venv on their first launch.bat run). launch.vbs is the
@@ -67,9 +63,15 @@ echo [yt-dl pkg] Writing FRIEND_README.txt...
   echo OPTION A: Run the .exe ^(easiest^)
   echo ---------------------------------
   echo 1. Double-click YTGrab.exe
-  echo 2. Your browser opens to http://localhost:8765 a second later
-  echo 3. Paste a YouTube URL, pick quality/format, click Download
-  echo 4. When you are done, just close the browser tab. App exits on its own.
+  echo 2. A small setup window appears for a few seconds while it
+  echo    installs itself to %%LOCALAPPDATA%%\Programs\YTGrab and
+  echo    creates Desktop + Start Menu shortcuts. One-time only.
+  echo 3. The app opens automatically. Paste a YouTube URL, pick
+  echo    quality/format, click Download.
+  echo 4. When you are done, just close the window. App exits on its own.
+  echo.
+  echo After the first run, launch YT Grab from the new Desktop or
+  echo Start Menu shortcut -- you do not need to keep this zip.
   echo.
   echo If Windows shows "Windows protected your PC" ^(blue panel^):
   echo   Click "More info" then "Run anyway". One-time prompt.
@@ -97,24 +99,24 @@ echo [yt-dl pkg] Writing FRIEND_README.txt...
   echo.
   echo Where do downloads go?
   echo ----------------------
-  echo Next to whichever file you launched:
-  echo   .exe mode:    same folder as YTGrab.exe  ^(in a "downloads" subfolder^)
+  echo   .exe mode:    %%LOCALAPPDATA%%\Programs\YTGrab\downloads
   echo   source mode:  source\downloads\
   echo.
   echo.
   echo Stopping it
   echo -----------
-  echo Just close the browser tab. Server auto-shuts-down within a minute.
+  echo Just close the window. Server auto-shuts-down within a minute.
   echo.
   echo.
   echo Uninstalling
   echo ------------
-  echo Double-click YTGrabUninstaller.exe. It will:
+  echo Use the "Uninstall YT Grab" shortcut ^(Desktop or Start Menu^)
+  echo that was created during the first run. It will:
   echo   - optionally export your downloads and history to your Desktop
-  echo   - stop YTGrab.exe if it's running
-  echo   - delete %%LOCALAPPDATA%%\YTGrab ^(app data^)
+  echo   - stop YT Grab if it's running
+  echo   - delete %%LOCALAPPDATA%%\YTGrab ^(webview cache^)
   echo   - delete the Desktop + Start Menu shortcuts
-  echo   - delete this install folder when it closes
+  echo   - delete the install folder when it closes
   echo.
   echo It does NOT touch the registry, ProgramData, or any other folder.
   echo.
@@ -155,13 +157,6 @@ goto end
 echo.
 echo [yt-dl pkg] ERROR: dist\YTGrab.exe not found.
 echo [yt-dl pkg] Run build.bat first, then re-run package.bat.
-pause
-goto end
-
-:err_nouninst
-echo.
-echo [yt-dl pkg] ERROR: dist\YTGrabUninstaller.exe not found.
-echo [yt-dl pkg] Run build.bat first -- it builds both exes.
 pause
 goto end
 

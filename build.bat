@@ -1,7 +1,25 @@
 @echo off
 REM YT Grab -- build script.
-REM Produces dist\YTGrab.exe (a standalone Windows binary your friend
-REM can double-click -- no Python install required on the target machine).
+REM
+REM Produces three files in dist\. TWO are release assets, one is an
+REM intermediate that lives inside the bundled installer:
+REM
+REM   dist\YTGrabApp.exe           the real Flask + pywebview app.
+REM                                NOT a release asset; bundled inside
+REM                                dist\YTGrab.exe below.
+REM
+REM   dist\YTGrabUninstaller.exe   standalone tkinter uninstaller.
+REM                                Also a release asset -- posted on its
+REM                                own as a safety-net download for users
+REM                                who lost their uninstaller shortcut.
+REM                                ALSO bundled inside YTGrab.exe so a
+REM                                normal install still wires up the
+REM                                "Uninstall YT Grab" shortcut.
+REM
+REM   dist\YTGrab.exe              the main public download. Contains
+REM                                the two binaries above as PyInstaller
+REM                                data resources; handles install and
+REM                                auto-update.
 REM
 REM Prereq: launch.bat has been run at least once so the venv exists.
 
@@ -39,12 +57,12 @@ if not exist "bin\ffprobe.exe" call fetch_ffmpeg.bat
 if not exist "bin\ffprobe.exe" goto err_ffmpeg
 
 echo.
-echo [yt-dl build] Running PyInstaller. This takes 30-90 seconds the first time.
+echo [yt-dl build] Building YTGrabApp.exe (inner app). This takes 30-90 seconds the first time.
 venv\Scripts\python.exe -m PyInstaller --clean YTGrab.spec
 if errorlevel 1 goto err_pyinstaller
 
 echo.
-if not exist "dist\YTGrab.exe" goto err_nooutput
+if not exist "dist\YTGrabApp.exe" goto err_nooutput
 
 REM Build the standalone uninstaller alongside the main app. Stdlib-only,
 REM so this second pass adds ~10s and ~10MB. Output: dist\YTGrabUninstaller.exe
@@ -54,23 +72,26 @@ venv\Scripts\python.exe -m PyInstaller --clean Uninstaller.spec
 if errorlevel 1 goto err_pyinstaller_uninst
 if not exist "dist\YTGrabUninstaller.exe" goto err_nouninst
 
-REM Build the public-facing online installer / auto-updater. This is
-REM the .exe friends grab from the public github.com/SIeepyDev/YTGrab
-REM repo. Stdlib-only, ~10s, ~10MB. Output: dist\YTGrabSetup.exe
+REM Build the single public-facing YTGrab.exe. It bundles the two inner
+REM binaries above as PyInstaller data resources and handles install +
+REM auto-update on the user's machine. Installer.spec reads dist\YTGrabApp.exe
+REM and dist\YTGrabUninstaller.exe off disk at build time, so the two
+REM passes above MUST succeed first.
 echo.
-echo [yt-dl build] Building YTGrabSetup.exe (online installer)...
+echo [yt-dl build] Building YTGrab.exe (single public download)...
 venv\Scripts\python.exe -m PyInstaller --clean Installer.spec
 if errorlevel 1 goto err_pyinstaller_setup
-if not exist "dist\YTGrabSetup.exe" goto err_nosetup
+if not exist "dist\YTGrab.exe" goto err_nosetup
 
 echo ==================================================
 echo [yt-dl build] DONE
 echo.
-echo   App:             %cd%\dist\YTGrab.exe
-echo   Uninstaller:     %cd%\dist\YTGrabUninstaller.exe
-echo   Online setup:    %cd%\dist\YTGrabSetup.exe
+echo   Ships to GitHub:  %cd%\dist\YTGrab.exe             (main download)
+echo   Ships to GitHub:  %cd%\dist\YTGrabUninstaller.exe  (safety-net)
+echo   (bundled inside)  %cd%\dist\YTGrabApp.exe          (inside YTGrab.exe)
 echo.
-echo   Run release.bat to publish all three to the public repo.
+echo   Run release.bat to upload the two release assets. YTGrabApp.exe
+echo   stays local -- it rides inside YTGrab.exe.
 echo   First launch may take 5-10 seconds as Windows unpacks it.
 echo   Windows Defender may warn -- click "More info" then "Run anyway".
 echo ==================================================
@@ -120,7 +141,7 @@ goto end
 
 :err_nooutput
 echo.
-echo [yt-dl build] ERROR: build completed without producing dist\YTGrab.exe.
+echo [yt-dl build] ERROR: build completed without producing dist\YTGrabApp.exe.
 echo [yt-dl build] Check the PyInstaller output above.
 pause
 goto end
@@ -141,8 +162,8 @@ goto end
 
 :err_nosetup
 echo.
-echo [yt-dl build] ERROR: build completed without producing dist\YTGrabSetup.exe.
-echo [yt-dl build] Check the PyInstaller output above for the setup pass.
+echo [yt-dl build] ERROR: build completed without producing dist\YTGrab.exe.
+echo [yt-dl build] Check the PyInstaller output above for the bundler pass.
 pause
 goto end
 
