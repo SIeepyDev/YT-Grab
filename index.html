@@ -1402,30 +1402,45 @@
       0 6px 18px rgba(0, 0, 0, 0.35),
       /* Tight contact shadow */
       0 1px 2px rgba(0, 0, 0, 0.3),
-      /* Ambient accent halo — current color bleeds into surrounding */
-      0 0 28px rgba(var(--accent-rgb), 0.14);
-    /* Liquid Glass fill — a translucent, frosted disc that sits
-       inside the hue ring. No opaque HSV grid anymore; instead we
-       layer a subtle frosted sheen, a gentle hue-tinted glow (the
-       --cp-hue CSS variable is pushed in live from JS so the tint
-       softly tracks the picked color), and a faint bottom shade for
-       weight. Presence without dominating the glass. */
+      /* Ambient accent halo — current color bleeds into surrounding.
+         Bumped from 0.14 → 0.32 alpha + larger spread so the picker
+         visibly glows the color you're picking, not just hints at it. */
+      0 0 38px 4px rgba(var(--accent-rgb), 0.32);
+    /* Liquid Glass fill — translucent disc that picks up the live
+       hue. Two stacked hue-tint pools (upper-left + lower-right) so
+       the tint reads from any angle instead of pooling in just one
+       quadrant; both alpha bumped well past the previous "barely
+       visible" 0.18 so the picked color actually shows on the glass. */
     background:
       /* soft bottom shade gives the disc a little weight */
-      linear-gradient(to top, rgba(0,0,0,0.26), transparent 62%),
-      /* hue-tinted sheen pooling upper-left like Apple's Liquid Glass */
+      linear-gradient(to top, rgba(0,0,0,0.22), transparent 62%),
+      /* secondary hue pool — lower-right — so saturation/brightness
+         changes ripple across the whole disc, not just one corner */
+      radial-gradient(
+        ellipse 100% 100% at 72% 78%,
+        hsla(var(--cp-hue, 270), 80%, 55%, 0.30),
+        transparent 70%
+      ),
+      /* primary hue-tinted sheen pooling upper-left like Apple's
+         Liquid Glass — bumped 0.18 → 0.45 so the disc actually reads
+         as the picked color instead of grey. */
       radial-gradient(
         ellipse 115% 90% at 34% 30%,
-        hsla(var(--cp-hue, 270), 78%, 62%, 0.18),
-        transparent 72%
+        hsla(var(--cp-hue, 270), 82%, 62%, 0.45),
+        transparent 70%
       ),
       /* frosted-glass base — translucent white layer for the crystal look */
       linear-gradient(135deg,
-        rgba(255,255,255,0.09) 0%,
+        rgba(255,255,255,0.10) 0%,
         rgba(255,255,255,0.02) 50%,
         rgba(255,255,255,0.06) 100%);
     backdrop-filter: blur(18px) saturate(1.4);
     -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    /* Smooth transitions on the live hue + accent updates so the
+       glow + tint feel reactive instead of snapping. */
+    transition:
+      box-shadow 0.18s ease,
+      background-color 0.18s ease;
   }
   /* Top specular crescent — curved highlight pooling at the top of
      the glass circle. Positioned slightly above the element so only
@@ -2167,16 +2182,16 @@
       </span>
       <span class="sb-label">URL</span>
     </button>
-    <button class="sb-row" onclick="jumpTo('history')" title="Focus History">
+    <button class="sb-row" onclick="jumpTo('history')" title="Focus Downloads">
       <span class="sb-icon">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <polyline points="12 6 12 12 16 14"/>
         </svg>
       </span>
-      <span class="sb-label">History</span>
+      <span class="sb-label">Downloads</span>
     </button>
-    <button class="sb-row" onclick="jumpTo('activity')" title="Focus Previous Downloads">
+    <button class="sb-row" onclick="jumpTo('activity')" title="Focus Previously Deleted">
       <span class="sb-icon">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="21 8 21 21 3 21 3 8"/>
@@ -2184,7 +2199,7 @@
           <line x1="10" y1="12" x2="14" y2="12"/>
         </svg>
       </span>
-      <span class="sb-label">Previous</span>
+      <span class="sb-label">Previously Deleted</span>
     </button>
     <button class="sb-row" onclick="openShortcuts()" title="Keyboard shortcuts (?)">
       <span class="sb-icon">
@@ -2218,7 +2233,7 @@
           <line x1="8" y1="14" x2="16" y2="14"/>
         </svg>
       </span>
-      <span class="sb-label">Previous folder</span>
+      <span class="sb-label">Open trash folder</span>
     </button>
 
     <!-- Body: only visible when expanded. Structure top-to-bottom:
@@ -2278,7 +2293,7 @@
         <div class="about-line" style="margin-top: 8px">Built on yt-dlp + Flask + pywebview.</div>
         <a class="about-link" href="https://github.com/SIeepyDev/YT-Grab" target="_blank" rel="noopener">View source on GitHub</a>
         <button class="settings-reset" onclick="openExportModal()" style="margin-top: 14px;">Export data...</button>
-        <div class="about-line" style="margin-top: 4px; font-size: 10px">Write a <code style="font-size: 10px">YTGrab-export-*</code> folder to your Desktop. Pick History, Previous, or both. Safe to do any time; a fresh copy every click.</div>
+        <div class="about-line" style="margin-top: 4px; font-size: 10px">Write a <code style="font-size: 10px">YTGrab-export-*</code> folder to your Desktop. Pick Downloads, Previously Deleted, or both. Safe to do any time; a fresh copy every click.</div>
         <button class="settings-reset" onclick="importExport()" style="margin-top: 14px;">Import exported data...</button>
         <div class="about-line" style="margin-top: 4px; font-size: 10px">Pick a <code style="font-size: 10px">YTGrab-export-*</code> folder (from the Export button above or the uninstaller's Desktop dump). Files and history merge in; nothing is overwritten.</div>
         <button class="settings-reset" onclick="resetSettings()" style="margin-top: 14px;">Reset all settings</button>
@@ -2569,7 +2584,7 @@
     <div class="col">
       <div class="card">
         <div class="card-head">
-          <h2>History <span class="count-badge" id="history-count"></span></h2>
+          <h2>Downloads <span class="count-badge" id="history-count"></span></h2>
           <div class="card-head-actions">
             <input type="text" class="filter-input" id="history-filter" placeholder="Filter..." oninput="renderHistory()">
             <button class="ghost-btn icon-only" onclick="openDownloadsFolder()"
@@ -2678,7 +2693,7 @@
            from here or clear the log itself.) -->
       <div class="card">
         <div class="card-head">
-          <h2>Previous Downloads <span class="count-badge" id="activity-count"></span></h2>
+          <h2>Previously Deleted <span class="count-badge" id="activity-count"></span></h2>
           <div class="card-head-actions">
             <input type="text" class="filter-input" id="activity-filter" placeholder="Filter..." oninput="renderActivity()">
             <button class="ghost-btn icon-only" onclick="openPreviousFolder()"
@@ -2814,14 +2829,14 @@
       <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: var(--text); cursor: pointer; padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-2);">
         <input type="checkbox" id="export-history" checked style="margin-top: 2px;">
         <span>
-          <strong style="color: var(--text);">History</strong><br>
+          <strong style="color: var(--text);">Downloads</strong><br>
           <span style="color: var(--text-3); font-size: 11px;">Current files on disk + <code style="font-size: 10px;">history.json</code></span>
         </span>
       </label>
       <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: var(--text); cursor: pointer; padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-2);">
         <input type="checkbox" id="export-previous" checked style="margin-top: 2px;">
         <span>
-          <strong style="color: var(--text);">Previous Downloads</strong><br>
+          <strong style="color: var(--text);">Previously Deleted</strong><br>
           <span style="color: var(--text-3); font-size: 11px;">Deleted-but-restorable items + <code style="font-size: 10px;">activity.json</code></span>
         </span>
       </label>
@@ -3703,7 +3718,7 @@
     cmds.push({ section: 'Actions', label: 'Paste URL from clipboard',  keywords: 'paste clipboard url',                 run: safeCall('pasteFromClipboard') });
     cmds.push({ section: 'Actions', label: 'Load video info',           keywords: 'load info fetch',                     run: safeCall('loadInfo') });
     cmds.push({ section: 'Actions', label: 'Open downloads folder',     keywords: 'open folder explorer downloads',      run: safeCall('openDownloadsFolder') });
-    cmds.push({ section: 'Actions', label: 'Clear history',             keywords: 'clear history wipe',                  run: safeCall('clearHistory') });
+    cmds.push({ section: 'Actions', label: 'Clear Downloads',           keywords: 'clear downloads history wipe',        run: safeCall('clearHistory') });
     cmds.push({ section: 'Actions', label: 'Undo last delete',          keywords: 'undo restore recycle',                run: safeCall('undoLastDelete') });
 
     // NAVIGATE
@@ -4649,6 +4664,25 @@
     loadActivity();
   }
 
+  // -------------------------------------------------------------------------
+  // Convert an existing Downloads entry to an AE-friendly mp4 (H.264/AAC).
+  // Hits the /api/history/convert_ae/<id> endpoint which re-runs the same
+  // ffmpeg transcode the fresh-download path applies. Used for entries
+  // downloaded before v1.19 or on a machine that didn't have ffmpeg at
+  // download time.
+  // -------------------------------------------------------------------------
+  async function convertHistoryToAE(id) {
+    if (!await appConfirm(
+      'Convert to AE-friendly?',
+      'Re-encodes this video to H.264 + AAC mp4 so After Effects, Premiere, and DaVinci can import it. Replaces the original file. Takes a few minutes per video; the app stays usable while it runs.'
+    )) return;
+    toast('Converting in background…', 'ok');
+    const r = await api('POST', '/api/history/convert_ae/' + encodeURIComponent(id));
+    if (!r.ok) { toast(r.error || 'Convert failed', 'err'); return; }
+    toast('Converted — drop into AE/Premiere/DaVinci anytime', 'ok');
+    loadHistory();
+  }
+
   // ---------------------------------------------------------------------------
   // Inline rename: swap the .hist-title text for an <input> in-place.
   // Enter saves, Esc cancels, blur saves. Matches Windows Explorer F2
@@ -4745,11 +4779,11 @@
   }
 
   async function clearHistory() {
-    if (!await appConfirm('Clear history?', 'Every downloaded file goes to the Recycle Bin. Ctrl+Z restores the history entries. Files stay in Previous Downloads as a log.')) return;
+    if (!await appConfirm('Clear Downloads?', 'Every downloaded file goes to the Recycle Bin. Ctrl+Z restores the entries. Files stay in Previously Deleted as a log.')) return;
     const r = await api('POST', '/api/history/clear');
     if (!r.ok) { toast('Could not clear', 'err'); return; }
     const n = r.count || 0;
-    toast(n > 0 ? (n + ' files moved to Recycle Bin · Ctrl+Z to undo') : 'History cleared', 'ok');
+    toast(n > 0 ? (n + ' files moved to Recycle Bin · Ctrl+Z to undo') : 'Downloads cleared', 'ok');
     loadHistory();
     loadActivity();
   }
@@ -4792,7 +4826,7 @@
               <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
             </svg>
             <p class="es-head">Deleted downloads go here</p>
-            <p class="es-sub">Anything you remove from History lands in this log so you can bring it back with one click.</p>
+            <p class="es-sub">Anything you remove from Downloads lands in this log so you can bring it back with one click.</p>
           </div>`;
       }
       return;
@@ -4826,15 +4860,15 @@
   async function deleteActivityItem(id) {
     const r = await api('POST', '/api/activity/delete/' + encodeURIComponent(id));
     if (!r.ok) { toast(r.error || 'Could not remove', 'err'); return; }
-    toast('Removed from Previous Downloads', 'ok');
+    toast('Removed from Previously Deleted', 'ok');
     loadActivity();
   }
 
   async function clearActivity() {
-    if (!await appConfirm('Clear the Previous Downloads log?', 'Files were already deleted — this only clears the log itself.')) return;
+    if (!await appConfirm('Clear the Previously Deleted log?', 'Files were already deleted — this only clears the log itself.')) return;
     const r = await api('POST', '/api/activity/clear');
     if (!r.ok) { toast('Could not clear', 'err'); return; }
-    toast('Previous Downloads cleared', 'ok');
+    toast('Previously Deleted cleared', 'ok');
     loadActivity();
   }
 
@@ -5142,9 +5176,32 @@
       return a;
     }
     function svFromEvent(e) {
+      // The .cp-sv element is rendered as a circle (border-radius:50%)
+      // but its bounding rect is square, so a naive clamp lets the
+      // user drag the dot into the corners that lie OUTSIDE the
+      // visible glass disc. Project any out-of-circle position back
+      // onto the circle edge so the dot tracks the visible boundary
+      // exactly. Inside the circle the s/v mapping is unchanged
+      // (x→saturation, y→inverted value) so feel is identical for
+      // most picks; only edge-of-square corners snap to the circle
+      // edge, which is what the user expects from a circular picker.
       const rect = sv.getBoundingClientRect();
-      const x = Math.max(0, Math.min(rect.width,  e.clientX - rect.left));
-      const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      const cx = rect.width  / 2;
+      const cy = rect.height / 2;
+      const r  = Math.min(cx, cy);
+      let x = e.clientX - rect.left;
+      let y = e.clientY - rect.top;
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > r) {
+        // Snap to the circle edge along the user's drag vector.
+        x = cx + (dx / dist) * r;
+        y = cy + (dy / dist) * r;
+      }
+      // Final clamp covers the case where e.clientX/Y was way off-screen.
+      x = Math.max(0, Math.min(rect.width,  x));
+      y = Math.max(0, Math.min(rect.height, y));
       return {
         s: (x / rect.width)  * 100,
         v: ((rect.height - y) / rect.height) * 100,
@@ -5538,6 +5595,7 @@
       ren:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
       redl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
       del:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+      ae:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>',
     };
 
     // Resolve the original URL from either the source_url field
@@ -5567,6 +5625,14 @@
     sep();
     mk('Rename', ICONS.ren, () => startRename(rowEl, item));
     mk('Redownload', ICONS.redl, () => redownload(item));
+    // Per-row repair button: re-run the same H.264/AAC mp4 transcode
+    // the fresh-download path applies, in case this entry was
+    // downloaded before v1.19 (or the auto-transcode was skipped on
+    // an offline machine missing ffmpeg). Audio entries don't get
+    // this option -- they're already in editor-friendly formats.
+    if (item.format_group !== 'audio') {
+      mk('Convert to AE-friendly', ICONS.ae, () => convertHistoryToAE(item.id));
+    }
     sep();
     mk('Delete', ICONS.del, () => deleteHistoryItem(item.id), /*danger*/ true);
 

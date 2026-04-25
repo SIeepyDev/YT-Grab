@@ -332,6 +332,125 @@ def _find_ffmpeg_and_ffprobe():
 
 FFMPEG_LOCATION, HAS_FFPROBE = _find_ffmpeg_and_ffprobe()
 
+# Codecs YouTube serves at >=1440p (VP9, AV1) plus the Opus audio it
+# pairs with them are NOT decodable by After Effects, Premiere on the
+# stock import path, or DaVinci Resolve free. We auto-transcode any
+# downloaded video to H.264 + AAC inside an mp4 so the file just works
+# in every NLE without the user thinking about codecs. CRF 17 at preset
+# medium is visually indistinguishable from the source on YouTube-grade
+# content; preserves resolution (4K stays 4K, just in H.264 instead of
+# VP9). No quality loss the eye can pick up; the file gains "drag into
+# AE and it imports" reliability.
+def _ffmpeg_exe_path():
+    """Return the absolute path to ffmpeg.exe we should invoke for
+    transcodes. Prefers the same binary yt-dlp uses (FFMPEG_LOCATION),
+    falls back to PATH. Returns None if no ffmpeg is available -- the
+    transcode step is then skipped silently and the raw download is
+    handed to the user as-is."""
+    if FFMPEG_LOCATION:
+        for ext in (".exe", ""):
+            cand = Path(FFMPEG_LOCATION) / f"ffmpeg{ext}"
+            if cand.exists():
+                return str(cand)
+    p = _which("ffmpeg")
+    return p
+
+
+def _transcode_to_ae_friendly(in_path, job_id=None):
+    """Transcode `in_path` (any container/codec) to an H.264 + AAC mp4
+    in place. Atomically replaces the original on success; leaves the
+    original alone on failure. Returns the final path (str).
+
+    Why: yt-dlp at >=1440p hands us VP9/AV1 video and Opus audio in an
+    mp4 container, which AE/Premiere/DaVinci's native importers refuse.
+    A single ffmpeg pass to H.264 + AAC makes the file importable in
+    every NLE. We pick CRF 17 + preset medium = visually lossless on
+    YouTube-source material with reasonable encode time.
+    """
+    in_path = Path(in_path)
+    if not in_path.exists() or in_path.suffix.lower() not in (".mp4", ".mkv", ".webm", ".mov"):
+        return str(in_path)
+
+    ffmpeg_exe = _ffmpeg_exe_path()
+    if not ffmpeg_exe:
+        # No ffmpeg available -- skip the transcode silently. The user
+        # gets the raw yt-dlp output. Better to ship something than to
+        # fail the whole download.
+        return str(in_path)
+
+    # Stage the new file alongside the source so a successful transcode
+    # is a single atomic rename. mp4 is the only output container we
+    # produce (AE-friendly).
+    out_path = in_path.with_name(in_path.stem + ".__ae__.mp4")
+    final_path = in_path.with_suffix(".mp4")  # always .mp4 after transcode
+
+    if job_id is not None:
+        _update_job(job_id, status="transcoding", percent=99,
+                    speed="", eta="encoding for editors...")
+
+    cmd = [
+        ffmpeg_exe,
+        "-y",                    # overwrite the staged file if it exists
+        "-hide_banner",
+        "-loglevel", "warning",
+        "-i", str(in_path),
+        "-map", "0:v:0",         # only the primary video stream
+        "-map", "0:a:0?",        # primary audio if present
+        "-c:v", "libx264",
+        "-crf", "17",
+        "-preset", "medium",
+        "-pix_fmt", "yuv420p",   # max compat across NLEs and players
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        "-map_metadata", "0",
+        str(out_path),
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True, text=True,
+            timeout=60 * 60,  # 1h ceiling -- a 4K hour-long video at preset medium fits comfortably
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as e:
+        # ffmpeg crashed or timed out. Clean up the partial file and
+        # hand the original back. Logged for triage.
+        print(f"[yt-dl] transcode failed for {in_path.name}: {e}", file=sys.stderr)
+        try: out_path.unlink()
+        except Exception: pass
+        return str(in_path)
+
+    if proc.returncode != 0:
+        print(f"[yt-dl] ffmpeg exit {proc.returncode} on {in_path.name}: {proc.stderr[-400:]}", file=sys.stderr)
+        try: out_path.unlink()
+        except Exception: pass
+        return str(in_path)
+
+    # Replace the original. If the original is .mp4 the rename in-place
+    # works; if it's .mkv/.webm/.mov we drop the original and keep the
+    # new .mp4 as the canonical file (matches the AE-friendly promise).
+    try:
+        if in_path.suffix.lower() != ".mp4":
+            try: in_path.unlink()
+            except Exception: pass
+        else:
+            try: in_path.unlink()
+            except Exception: pass
+        out_path.replace(final_path)
+    except Exception as e:
+        # Replace failed -- best-effort cleanup. The partial out_path
+        # may still be on disk; tell the caller to hand back the
+        # original (which still exists if we couldn't unlink it).
+        print(f"[yt-dl] transcode swap failed for {in_path.name}: {e}", file=sys.stderr)
+        try: out_path.unlink()
+        except Exception: pass
+        return str(in_path) if in_path.exists() else str(final_path)
+
+    return str(final_path)
+
+
 app = Flask(__name__, static_folder=str(RESOURCE_DIR), static_url_path="")
 
 # ---------------------------------------------------------------------------
@@ -734,6 +853,17 @@ def _do_download(job_id, url, params):
                     break
             else:
                 filename = base_filename  # last resort
+
+        # AE-friendly auto-transcode (video downloads only). After yt-dlp
+        # finishes, the merged file may contain VP9 or AV1 video and Opus
+        # audio at >=1440p, none of which AE / Premiere / DaVinci's
+        # native importers will decode. We re-encode to H.264 + AAC in
+        # the same mp4 container so every file just works in every NLE.
+        # Skipped silently for audio-only jobs and when ffmpeg is missing.
+        if format_group == "video":
+            new_filename = _transcode_to_ae_friendly(filename, job_id=job_id)
+            if new_filename and new_filename != filename:
+                filename = new_filename
 
         # Thumbnail sidecar handling. yt-dlp wrote a <stem>.webp/.jpg next to
         # the media file so EmbedThumbnail had something to work with. If the
@@ -1252,6 +1382,44 @@ def api_history_rename(job_id):
     _save_history(hist)
 
     return jsonify({"ok": True, "entry": target, "files_renamed": True})
+
+
+@app.route("/api/history/convert_ae/<job_id>", methods=["POST"])
+def api_history_convert_ae(job_id):
+    """One-shot 'make this old download AE-friendly' button. Locates the
+    history entry's video file and runs the same H.264/AAC transcode the
+    fresh-download path does. Idempotent -- if the file is already H.264
+    AAC ffmpeg just re-encodes it (still safe, still importable). Returns
+    the updated entry so the client can refresh its row.
+
+    Use case: videos downloaded before v1.19 (or in formats yt-dlp picked
+    that AE refused) can be repaired in place without re-downloading.
+    """
+    hist = _load_history()
+    target = None
+    for h in hist:
+        if h.get("id") == job_id:
+            target = h
+            break
+    if not target:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if target.get("format_group") == "audio":
+        return jsonify({"ok": False, "error": "audio entries don't need AE conversion"}), 400
+
+    src = target.get("filename")
+    if not src or not Path(src).exists():
+        return jsonify({"ok": False, "error": "video file missing on disk"}), 404
+
+    new_path = _transcode_to_ae_friendly(src, job_id=None)
+    if new_path == src and not Path(new_path).exists():
+        return jsonify({"ok": False, "error": "ffmpeg unavailable or transcode failed"}), 500
+
+    # File extension may have changed (.mkv/.webm -> .mp4). Update the
+    # entry so subsequent open/play/rename all hit the new path.
+    target["filename"] = new_path
+    target["format_ext"] = Path(new_path).suffix.lstrip(".").lower() or target.get("format_ext")
+    _save_history(hist)
+    return jsonify({"ok": True, "entry": target})
 
 
 @app.route("/api/history/clear", methods=["POST"])
