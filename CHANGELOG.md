@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.18.0...v1.19.0) (2026-04-25)
+
+
+### Features
+
+* auto-transcode downloads to AE-friendly mp4 + color picker fixes ([a578c30](https://github.com/SIeepyDev/YT-Grab/commit/a578c3019baa085d425623c63eac7aa1555d0e2e))
+
 ## [1.18.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.17.0...v1.18.0) (2026-04-23)
 
 
