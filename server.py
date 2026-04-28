@@ -53,14 +53,104 @@ else:
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 # Dedicated "soft-delete archive" for items the user removed from
-# History. Two-stage delete: History X moves folder here; Previous X
-# (or Clear Previous) sends from here to the Recycle Bin permanently.
-# Undo restores from here back to downloads/.
-PREVIOUS_DIR = BASE_DIR / "previous_downloads"
+# Downloads. Two-stage delete: Downloads X moves folder here;
+# Trash X (or Clear all) sends from here to the Recycle Bin
+# permanently. Undo restores from here back to downloads/.
+#
+# Folder name as of v1.20 is `trash/` (matches the sidebar's "Open
+# trash folder" label). Two legacy names are migrated forward on
+# first launch:
+#   - `previous_downloads/`  (pre-1.19 layout)
+#   - `previously_deleted/`  (interim 1.19 rename)
+# Migration moves contents into trash/ and removes the legacy folder.
+PREVIOUS_DIR = BASE_DIR / "trash"
+_PREV_LEGACY_DIRS = [
+    BASE_DIR / "previously_deleted",
+    BASE_DIR / "previous_downloads",
+]
+for _legacy in _PREV_LEGACY_DIRS:
+    if not _legacy.is_dir():
+        continue
+    if not PREVIOUS_DIR.exists():
+        try:
+            _legacy.rename(PREVIOUS_DIR)
+            continue
+        except Exception:
+            # Couldn't rename (locked by Explorer, permission issue).
+            # Fall back to using the legacy folder in place so the app
+            # keeps working; user can manually rename next session.
+            PREVIOUS_DIR = _legacy
+            continue
+    # Both exist -- move contents into the canonical folder, then
+    # drop the empty legacy folder. Best-effort; never fatal.
+    try:
+        for child in _legacy.iterdir():
+            target = PREVIOUS_DIR / child.name
+            if target.exists():
+                continue
+            try:
+                child.rename(target)
+            except Exception:
+                pass
+        try:
+            _legacy.rmdir()
+        except Exception:
+            pass
+    except Exception:
+        pass
 PREVIOUS_DIR.mkdir(exist_ok=True)
 HISTORY_FILE = BASE_DIR / "history.json"
 ACTIVITY_FILE = BASE_DIR / "activity.json"
 PORT = 8765
+
+
+def _migrate_legacy_path_strings():
+    """Pair to the trash/ folder migration above. Rewrite any absolute
+    path strings inside history.json and activity.json that pointed at
+    one of the old folder names so 'open folder' / undo / hard-delete
+    still resolve. Path-segment-aware so we never replace the legacy
+    token if it happens to appear inside a filename."""
+    legacy_tokens = ("previously_deleted", "previous_downloads")
+    target = "trash"
+    for jpath in (HISTORY_FILE, ACTIVITY_FILE):
+        if not jpath.is_file():
+            continue
+        try:
+            data = json.loads(jpath.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        changed = False
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            for key in ("folder", "filename", "transcript_path",
+                        "thumbnail_path", "subtitle_path"):
+                v = entry.get(key)
+                if not isinstance(v, str):
+                    continue
+                new_v = v
+                for legacy in legacy_tokens:
+                    new_v = (
+                        new_v
+                        .replace("\\" + legacy + "\\", "\\" + target + "\\")
+                        .replace("/"  + legacy + "/",  "/"  + target + "/")
+                    )
+                if new_v != v:
+                    entry[key] = new_v
+                    changed = True
+        if changed:
+            try:
+                jpath.write_text(
+                    json.dumps(data, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+
+
+_migrate_legacy_path_strings()
 
 # ---------------------------------------------------------------------------
 # Delete-undo stack. When the user clicks X on a history row or Clear All,
@@ -356,7 +446,418 @@ def _ffmpeg_exe_path():
     return p
 
 
-def _transcode_to_ae_friendly(in_path, job_id=None):
+def _ffprobe_exe_path():
+    """Sister to _ffmpeg_exe_path for the duration probe. Same lookup
+    rules; returns None when ffprobe isn't usable, in which case the
+    transcode runs without a real-time percent estimate."""
+    if FFMPEG_LOCATION:
+        for ext in (".exe", ""):
+            cand = Path(FFMPEG_LOCATION) / f"ffprobe{ext}"
+            if cand.exists():
+                return str(cand)
+    return _which("ffprobe")
+
+
+_ENCODER_DETECTION_INFO = {}   # filled by _detect_hwaccel_encoder, drained by first transcode log
+
+
+def _detect_hwaccel_encoder():
+    """Probe ffmpeg for an available H.264 hardware encoder so the
+    transcode pipeline doesn't melt the user's CPU. We try, in order:
+
+      h264_nvenc  -- NVIDIA GeForce / Quadro (most common; very fast)
+      h264_amf    -- AMD Radeon (RX series + recent APUs)
+      h264_qsv    -- Intel Quick Sync (any modern Intel CPU with iGPU)
+
+    For each, we first confirm ffmpeg was COMPILED with it
+    (-encoders output) and then run a 5-frame smoke test at 256x256
+    to confirm the GPU/driver path actually works. NVENC has a
+    minimum resolution well above the 64x64 we used in v1.19 (which
+    was silently rejecting NVENC on every machine, falling through
+    to QSV which DOES accept tiny inputs). 256x256 covers all three
+    encoders' minimums with margin.
+
+    Detection runs at module-import time, BEFORE _transcode_log is
+    defined, so we stash the diagnostic info in _ENCODER_DETECTION_INFO
+    and the first transcode flushes it to the log.
+
+    Returns the codec name string (e.g. "h264_nvenc") or None when
+    only software libx264 is available.
+    """
+    info = _ENCODER_DETECTION_INFO
+    ffmpeg = _ffmpeg_exe_path()
+    if not ffmpeg:
+        info["ffmpeg"] = None
+        info["error"] = "ffmpeg not found; using libx264 fallback"
+        return None
+    info["ffmpeg"] = ffmpeg
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+    except Exception as e:
+        info["error"] = f"-encoders probe failed: {e}"
+        return None
+
+    candidates = ("h264_nvenc", "h264_amf", "h264_qsv")
+    available = {c: (c in out) for c in candidates}
+    smoke = {}
+    chosen = None
+    for codec in candidates:
+        if not available[codec]:
+            smoke[codec] = "NOT_COMPILED"
+            continue
+        ok, why = _hwaccel_smoketest(ffmpeg, codec)
+        smoke[codec] = "PASS" if ok else f"FAIL: {why}"
+        if ok and chosen is None:
+            chosen = codec
+            # Don't break -- keep probing for diagnostic completeness.
+    info["available"] = available
+    info["smoketest"] = smoke
+    info["selected"] = chosen
+    return chosen
+
+
+def _hwaccel_smoketest(ffmpeg, codec):
+    """Encode 5 frames of 256x256 testsrc with `codec` to NUL. Returns
+    (ok: bool, reason: str) where reason captures the ffmpeg stderr
+    tail on failure so we can see WHY in the encoder log -- the v1.19
+    smoketest used 64x64 nullsrc which silently failed NVENC's
+    minimum resolution check, leaving every NVIDIA machine on QSV.
+
+    Why testsrc + 5 frames vs nullsrc + 1 frame: NVENC requires the
+    encoder to start producing output before it can verify the
+    pipeline. A single null frame can pass internal validation but
+    fail at the first encoded packet."""
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "testsrc=size=256x256:rate=30:duration=0.2",
+             "-c:v", codec,
+             "-f", "null", "NUL"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if proc.returncode == 0:
+            return (True, "")
+        tail = (proc.stderr or "")[-300:].strip().splitlines()
+        return (False, tail[-1] if tail else f"exit {proc.returncode}")
+    except Exception as e:
+        return (False, str(e))
+
+
+# Detected once at import time. Cached so every download doesn't pay
+# the probe cost (~200-500ms).
+_HWACCEL_ENCODER = _detect_hwaccel_encoder()
+
+# Runtime gate: if a hwaccel encode actually fails on real content
+# (not just the smoketest), flip this so subsequent jobs go straight
+# to libx264 instead of repeatedly trying a codec we know is broken
+# on this machine. Resets only on app restart.
+_HWACCEL_DISABLED_AT_RUNTIME = False
+
+
+# Windows process-priority constant. We launch ffmpeg below normal so
+# foreground apps stay snappy even mid-transcode -- the user can keep
+# scrolling, opening folders, watching another video, without ffmpeg
+# fighting them for the CPU. Bigger effect than preset choice for
+# perceived "is my computer still usable" feel.
+_BELOW_NORMAL_PRIORITY = 0x00004000
+
+
+def _video_duration_seconds(path):
+    """Return the file's duration in seconds (float) or None when
+    ffprobe can't read it. Used to convert ffmpeg's `out_time_us` into
+    a percent for the active queue UI."""
+    ffprobe = _ffprobe_exe_path()
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [ffprobe, "-v", "error",
+             "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1",
+             str(path)],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if proc.returncode != 0:
+            return None
+        return float(proc.stdout.strip())
+    except Exception:
+        return None
+
+
+def _video_resolution(path):
+    """Return (width, height) of the primary video stream, or None."""
+    ffprobe = _ffprobe_exe_path()
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [ffprobe, "-v", "error",
+             "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0",
+             str(path)],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if proc.returncode != 0:
+            return None
+        raw = (proc.stdout or "").strip()
+        if "," in raw:
+            w, h = raw.split(",")[:2]
+            return (int(w), int(h))
+    except Exception:
+        pass
+    return None
+
+
+def _video_fps(path):
+    """Return the primary video stream's frame rate as a float, or
+    None when ffprobe can't read it. Used to pick framerate-aware
+    bitrate defaults: 4K30 needs ~45 Mbps, 4K60 needs ~60+. ffprobe
+    reports avg_frame_rate as a "num/den" fraction (e.g. 30000/1001
+    for 29.97); we evaluate it cleanly so 29.97 doesn't get rounded
+    down past the 31 cutoff that selects between 30/60 defaults."""
+    ffprobe = _ffprobe_exe_path()
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [ffprobe, "-v", "error",
+             "-select_streams", "v:0",
+             "-show_entries", "stream=avg_frame_rate",
+             "-of", "default=noprint_wrappers=1:nokey=1",
+             str(path)],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if proc.returncode != 0:
+            return None
+        raw = (proc.stdout or "").strip()
+        if "/" in raw:
+            num, den = raw.split("/", 1)
+            num_f = float(num); den_f = float(den)
+            if den_f > 0:
+                return num_f / den_f
+        elif raw and raw != "N/A":
+            return float(raw)
+    except Exception:
+        pass
+    return None
+
+
+# Resolution+fps → "AE clean room" floor in kbps. Values follow
+# YouTube's official H.264 upload recommendations at the high end of
+# each band so transcode output has headroom even on motion-heavy
+# content. Table is keyed by (min_height, fps_class) where fps_class
+# is "60" for >=31fps and "30" otherwise (handles 29.97 / 59.94 cleanly).
+# The encoder uses these as VBR targets with maxrate=1.5x; actual output
+# bitrate naturally varies with content complexity.
+RESOLUTION_DEFAULTS_KBPS = {
+    # 4K
+    (2160, "60"): 60000,
+    (2160, "30"): 45000,
+    # 1440p
+    (1440, "60"): 24000,
+    (1440, "30"): 18000,
+    # 1080p
+    (1080, "60"): 18000,
+    (1080, "30"): 12000,
+    # 720p
+    (720,  "60"): 9000,
+    (720,  "30"): 6000,
+    # < 720p (minimum floor)
+    (0,    "60"): 4000,
+    (0,    "30"): 4000,
+}
+
+
+def _resolution_default_bitrate_kbps(path):
+    """Pick the matching cell from RESOLUTION_DEFAULTS_KBPS for the
+    file's actual resolution + fps. Iterates the table from highest
+    height down and returns the first cell whose min_height the file
+    meets. fps fallback is 30 when ffprobe can't read it (rare)."""
+    res = _video_resolution(path)
+    fps = _video_fps(path) or 30
+    fps_class = "60" if fps >= 31 else "30"
+    h = res[1] if res else 0
+    for min_h in sorted({k[0] for k in RESOLUTION_DEFAULTS_KBPS}, reverse=True):
+        if h >= min_h:
+            return RESOLUTION_DEFAULTS_KBPS[(min_h, fps_class)]
+    return 4000
+
+
+def _transcode_log(msg):
+    """Append one line to BASE_DIR/transcode-debug.log AND echo to
+    stderr so the user can both `type` the log file in PowerShell
+    and see the lines if they're running from a console. Used to
+    surface probe results + full ffmpeg argv per transcode for
+    triage when "expected 50 Mbps, got 2 Mbps" disagreements come up.
+    """
+    line = f"[{datetime.now().isoformat(timespec='seconds')}] {msg}"
+    try:
+        with open(BASE_DIR / "transcode-debug.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    try:
+        print(line, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+# One-shot dump of the floor table at module load so the user can
+# verify in transcode-debug.log that 4K60 actually maps to 60000 kbps,
+# not a typo'd value like 30000 or 33000. Runs before any transcode
+# so the table line precedes any [probe] block.
+try:
+    _transcode_log(
+        "[floor table] " + ", ".join(
+            f"{min_h}p{fps}={kbps}"
+            for (min_h, fps), kbps in sorted(
+                RESOLUTION_DEFAULTS_KBPS.items(),
+                key=lambda kv: (-kv[0][0], kv[0][1]),
+            )
+        )
+    )
+except Exception:
+    pass
+
+
+# Flush the encoder-detection diagnostic that ran at module import
+# before _transcode_log was available. Lets the user verify NVENC
+# was actually attempted and see why it was/wasn't selected.
+try:
+    if _ENCODER_DETECTION_INFO:
+        info = _ENCODER_DETECTION_INFO
+        _transcode_log(
+            "[encoders] ffmpeg     = " + str(info.get("ffmpeg")) + "\n"
+            "[encoders] available  = " + str(info.get("available")) + "\n"
+            "[encoders] smoketest  = " + str(info.get("smoketest")) + "\n"
+            "[encoders] selected   = " + str(info.get("selected"))
+            + (("\n[encoders] error      = " + str(info["error"])) if info.get("error") else "")
+        )
+except Exception:
+    pass
+
+
+def _video_bitrate_kbps(path, audio_kbps=192):
+    """Return a usable VIDEO-ONLY target bitrate in kbps via a 4-step
+    probe. Each step's output is normalized to "video bits per second"
+    so the value can be passed straight to ffmpeg's -b:v without
+    accidentally robbing the encoder of bits the audio track would
+    have eaten:
+
+      1. stream bit_rate          (already video-only -- return as-is)
+      2. format bit_rate          (total: video+audio+overhead -- subtract audio_kbps)
+      3. filesize × 8 / duration  (total: video+audio+overhead -- subtract audio_kbps)
+      4. resolution+fps default   (already a video-only target)
+
+    Sticking subtraction on steps 2/3 stops the under-bitrate that
+    happens when stream-level metadata is missing -- without it, a
+    50 Mbps source where ffprobe couldn't read the video stream
+    returns 50 Mbps total → we use it as -b:v → output video gets
+    50 Mbps but loses ~192 Kbps to the AAC audio share, ending up
+    at 49.8 Mbps video which is correct, but the format probe is
+    measuring source video+audio combined so we'd actually have to
+    strip the audio share to get an accurate video-only target.
+    """
+    ffprobe = _ffprobe_exe_path()
+    step1 = step2 = step3 = step4 = None
+    chosen = None
+    if ffprobe:
+        # Step 1: stream-level video bit_rate -- already video-only.
+        try:
+            proc = subprocess.run(
+                [ffprobe, "-v", "error",
+                 "-select_streams", "v:0",
+                 "-show_entries", "stream=bit_rate",
+                 "-of", "default=noprint_wrappers=1:nokey=1",
+                 str(path)],
+                capture_output=True, text=True, timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if proc.returncode == 0:
+                raw = (proc.stdout or "").strip()
+                if raw and raw != "N/A":
+                    kbps = int(raw) // 1000
+                    step1 = kbps
+                    if kbps >= 500:
+                        chosen = kbps
+        except Exception as e:
+            step1 = f"err:{e}"
+        if chosen is None:
+            # Step 2: format-level bit_rate -- includes audio +
+            # container overhead; subtract audio share to get
+            # video-only target.
+            try:
+                proc = subprocess.run(
+                    [ffprobe, "-v", "error",
+                     "-show_entries", "format=bit_rate",
+                     "-of", "default=noprint_wrappers=1:nokey=1",
+                     str(path)],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if proc.returncode == 0:
+                    raw = (proc.stdout or "").strip()
+                    if raw and raw != "N/A":
+                        total_kbps = int(raw) // 1000
+                        video_kbps = max(500, total_kbps - audio_kbps)
+                        step2 = (total_kbps, video_kbps)
+                        if video_kbps >= 500:
+                            chosen = video_kbps
+            except Exception as e:
+                step2 = f"err:{e}"
+    # Step 3: filesize × 8 / duration -- same audio-included property
+    # as format bit_rate, so the same subtraction applies.
+    if chosen is None:
+        try:
+            size_bytes = Path(path).stat().st_size
+            duration = _video_duration_seconds(path)
+            if size_bytes > 0 and duration and duration > 0:
+                total_kbps = int((size_bytes * 8) // (1000 * duration))
+                video_kbps = max(500, total_kbps - audio_kbps)
+                step3 = (size_bytes, duration, total_kbps, video_kbps)
+                if video_kbps >= 500:
+                    chosen = video_kbps
+        except Exception as e:
+            step3 = f"err:{e}"
+    floor_kbps = _resolution_default_bitrate_kbps(path)
+    if chosen is None:
+        step4 = floor_kbps
+        chosen = step4
+    # Always apply the resolution-default floor. This is the "AE clean
+    # room" guarantee: even when the source is genuinely low bitrate
+    # (e.g. an uploader who served a 4K-resolution stream at 1.8 Mbps,
+    # like format 401 AV1 on YouTube), we transcode at the spec'd 4K
+    # bitrate so the H.264 encoder has headroom to NOT add new
+    # compression artifacts on top of the source's existing ones.
+    # Output looks no better than source (data you don't have can't be
+    # added back), but AE/Premiere/DaVinci get a clean stream to work
+    # with instead of a doubly-compressed one.
+    final = max(chosen, floor_kbps)
+    _transcode_log(
+        f"[probe] file={path}\n"
+        f"        resolution={_video_resolution(path)}, fps={_video_fps(path)}\n"
+        f"        step1 stream_bit_rate    = {step1}\n"
+        f"        step2 format_bit_rate    = {step2}  (total_kbps, video_kbps_after_audio_subtract)\n"
+        f"        step3 filesize/duration  = {step3}  (bytes, sec, total_kbps, video_kbps)\n"
+        f"        step4 resolution+fps def = {step4}\n"
+        f"        floor (resolution+fps)   = {floor_kbps}\n"
+        f"        chosen (probe)           = {chosen}\n"
+        f"        FINAL target_kbps        = {final}  (max of chosen and floor)"
+    )
+    return final
+
+
+def _transcode_to_ae_friendly(in_path, job_id=None, _force_software=False):
     """Transcode `in_path` (any container/codec) to an H.264 + AAC mp4
     in place. Atomically replaces the original on success; leaves the
     original alone on failure. Returns the final path (str).
@@ -364,9 +865,21 @@ def _transcode_to_ae_friendly(in_path, job_id=None):
     Why: yt-dlp at >=1440p hands us VP9/AV1 video and Opus audio in an
     mp4 container, which AE/Premiere/DaVinci's native importers refuse.
     A single ffmpeg pass to H.264 + AAC makes the file importable in
-    every NLE. We pick CRF 17 + preset medium = visually lossless on
-    YouTube-source material with reasonable encode time.
+    every NLE. We target-match the source's bitrate so quality stays
+    transparent.
+
+    Hwaccel + fallback chain: if a hardware H.264 encoder is available
+    (NVENC/AMF/QSV) we use it first. If that crashes mid-stream we
+    recurse once with _force_software=True to retry on libx264. Net
+    effect: the user always gets a working file, even on a machine
+    whose GPU driver is too old / broken for the advertised codec.
     """
+    # Module-level gate that we both READ (deciding whether to attempt
+    # hwaccel) and WRITE (when hwaccel fails on real content). Python
+    # requires the `global` declaration at the top of the function
+    # before any reference to the name -- otherwise `name used prior
+    # to global declaration` SyntaxError at compile time.
+    global _HWACCEL_DISABLED_AT_RUNTIME
     in_path = Path(in_path)
     if not in_path.exists() or in_path.suffix.lower() not in (".mp4", ".mkv", ".webm", ".mov"):
         return str(in_path)
@@ -384,9 +897,31 @@ def _transcode_to_ae_friendly(in_path, job_id=None):
     out_path = in_path.with_name(in_path.stem + ".__ae__.mp4")
     final_path = in_path.with_suffix(".mp4")  # always .mp4 after transcode
 
+    # Probe for total duration so we can convert ffmpeg's `out_time_us`
+    # into a real percent for the UI. None when ffprobe is missing or
+    # the file's container doesn't expose duration -- in that case the
+    # job sits at "transcoding..." with no live percent.
+    duration = _video_duration_seconds(in_path) if job_id is not None else None
+
+    # Bitrate target: probe input → match it on output. This is what
+    # gives the 4K-at-50-Mbps result the user expects instead of the
+    # 4K-at-3-Mbps disaster the CRF mode produced (NVENC's quality
+    # scale undershoots the source by 10x). _video_bitrate_kbps()
+    # has a four-step fallback chain that always returns a usable
+    # video-only target.
+    #
+    # bufsize = 2 × maxrate is the standard VBR sizing that lets the
+    # rate controller actually hit the bitrate ceiling on motion peaks.
+    # An earlier version had bufsize = 2 × target (≈ 1.33 × maxrate),
+    # which is tight enough that VBR clamps under target on busy frames
+    # and the file averages low.
+    target_kbps  = _video_bitrate_kbps(in_path)
+    maxrate_kbps = max(int(target_kbps * 1.5), target_kbps + 2000)
+    bufsize_kbps = max(maxrate_kbps * 2, 8000)
+
     if job_id is not None:
-        _update_job(job_id, status="transcoding", percent=99,
-                    speed="", eta="encoding for editors...")
+        _update_job(job_id, status="transcoding", percent=1,
+                    speed="", eta=f"encoding @ {target_kbps // 1000} Mbps...")
 
     cmd = [
         ffmpeg_exe,
@@ -396,24 +931,186 @@ def _transcode_to_ae_friendly(in_path, job_id=None):
         "-i", str(in_path),
         "-map", "0:v:0",         # only the primary video stream
         "-map", "0:a:0?",        # primary audio if present
-        "-c:v", "libx264",
-        "-crf", "17",
-        "-preset", "medium",
-        "-pix_fmt", "yuv420p",   # max compat across NLEs and players
+    ]
+    # Encoder selection. All codecs use CBR-with-minrate so output
+    # actually hits the target bitrate. The previous VBR-with-maxrate
+    # variant let QSV undershoot a 60 Mbps 4K60 target to 32 Mbps
+    # because VBR treats -b:v as a soft "average goal" -- on simple
+    # source content the encoder saves bits and the file averages
+    # well below target. CBR mode pins minrate = target = maxrate so
+    # the encoder is forced to hit the floor literally. Files are
+    # larger than VBR equivalent, but bitrate is now predictable
+    # and matches the AE-clean-room intent of the floor: 60 Mbps in
+    # the floor table = 60 Mbps in the output file, full stop.
+    #
+    # libx264 fallback uses preset VERYFAST + nal-hrd=cbr to enforce
+    # CBR (libx264's default rate control is more conservative than
+    # the hardware encoders'). veryfast keeps motion comp and B-frames
+    # while staying fast enough to not overheat 4-core machines.
+    use_hwaccel = (
+        not _force_software
+        and not _HWACCEL_DISABLED_AT_RUNTIME
+        and _HWACCEL_ENCODER is not None
+    )
+    codec = _HWACCEL_ENCODER if use_hwaccel else "libx264"
+    cbr_buf = max(target_kbps * 2, 8000)
+    if codec == "h264_nvenc":
+        cmd += [
+            "-c:v", "h264_nvenc",
+            "-preset", "medium",        # legacy preset -- max compat
+            "-rc", "cbr",
+            "-b:v", f"{target_kbps}k",
+            "-minrate", f"{target_kbps}k",
+            "-maxrate", f"{target_kbps}k",
+            "-bufsize", f"{cbr_buf}k",
+            "-pix_fmt", "yuv420p",
+        ]
+    elif codec == "h264_amf":
+        cmd += [
+            "-c:v", "h264_amf",
+            "-rc", "cbr",
+            "-b:v", f"{target_kbps}k",
+            "-maxrate", f"{target_kbps}k",
+            "-bufsize", f"{cbr_buf}k",
+            "-pix_fmt", "yuv420p",
+        ]
+    elif codec == "h264_qsv":
+        cmd += [
+            "-c:v", "h264_qsv",
+            "-preset", "medium",
+            "-rc", "cbr",
+            "-b:v", f"{target_kbps}k",
+            "-maxrate", f"{target_kbps}k",
+            "-bufsize", f"{cbr_buf}k",
+            "-pix_fmt", "nv12",
+        ]
+    else:
+        # libx264 software fallback. nal-hrd=cbr forces the rate
+        # controller to meet the bitrate target on every GOP. -threads
+        # 4 keeps a 4-core machine usable. preset veryfast keeps motion
+        # comp + B-frames while staying fast enough to not overheat.
+        codec = "libx264"
+        cmd += [
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-b:v", f"{target_kbps}k",
+            "-minrate", f"{target_kbps}k",
+            "-maxrate", f"{target_kbps}k",
+            "-bufsize", f"{cbr_buf}k",
+            "-x264opts", "nal-hrd=cbr",
+            "-threads", "4",
+            "-pix_fmt", "yuv420p",
+        ]
+    cmd += [
         "-c:a", "aac",
         "-b:a", "192k",
         "-movflags", "+faststart",
-        "-map_metadata", "0",
-        str(out_path),
+        # No -map_metadata: copying source metadata propagated junk
+        # like "Year: 65124" from yt-dlp's tag handling. Output mp4
+        # ships with clean default metadata instead.
+        "-map_metadata", "-1",
     ]
+    if job_id is not None:
+        # `-progress pipe:1` writes structured key=value progress lines
+        # to stdout; `-nostats` silences the human-readable carriage-
+        # returned status to stderr that we'd otherwise have to parse.
+        cmd += ["-progress", "pipe:1", "-nostats"]
+    cmd += [str(out_path)]
 
+    # Dump the full argv so we can verify in transcode-debug.log
+    # exactly what -b:v / -maxrate / -bufsize values made it through
+    # to ffmpeg. If the values printed here don't match what
+    # _video_bitrate_kbps returned, we know the cmd-build step is
+    # corrupting them. If they DO match and the output bitrate is
+    # still wrong, the issue is downstream of the cmd assembly.
+    _transcode_log(
+        f"[ffmpeg] codec={codec}  target_kbps={target_kbps}  "
+        f"maxrate_kbps={maxrate_kbps}  bufsize_kbps={bufsize_kbps}\n"
+        f"[ffmpeg] argv = {cmd}"
+    )
+
+    rc = -1
+    stderr = ""
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True, text=True,
-            timeout=60 * 60,  # 1h ceiling -- a 4K hour-long video at preset medium fits comfortably
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        if job_id is not None:
+            # Streamed-progress path: spawn ffmpeg, parse out_time_us
+            # off stdout line-by-line, push percent into the job dict
+            # so the active queue paints it. The frontend's existing
+            # /api/progress_all polling picks it up automatically.
+            #
+            # BELOW_NORMAL_PRIORITY_CLASS keeps ffmpeg from fighting
+            # foreground apps for CPU. Big perceived-speed win even
+            # when the encoder is already light: the user can keep
+            # using the computer while a transcode runs in the
+            # background.
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+                creationflags=(
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    | _BELOW_NORMAL_PRIORITY
+                ),
+            )
+            # Register the child PID under the job so /api/job/cancel
+            # can taskkill exactly this transcode without nuking other
+            # ffmpeg processes on the system.
+            _update_job(job_id, _ffmpeg_pid=proc.pid)
+            try:
+                for raw in proc.stdout:  # ffmpeg flushes a block per second
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    # Cancellation check: the cancel endpoint sets a
+                    # per-job flag; bail out of the read loop and let
+                    # the proc.wait below mop up.
+                    with jobs_lock:
+                        cancelled = jobs.get(job_id, {}).get("_cancel_requested")
+                    if cancelled:
+                        try: proc.terminate()
+                        except Exception: pass
+                        break
+                    if raw.startswith("out_time_us=") and duration:
+                        try:
+                            out_us = int(raw.split("=", 1)[1])
+                            pct = (out_us / 1_000_000) / duration * 100.0
+                            pct_int = max(1, min(99, int(pct)))
+                            _update_job(
+                                job_id,
+                                status="transcoding",
+                                percent=pct_int,
+                                eta=f"{pct_int}%",
+                            )
+                        except Exception:
+                            pass
+                    elif raw == "progress=end":
+                        break
+            except Exception:
+                pass
+            try:
+                stderr = proc.stderr.read() if proc.stderr else ""
+            except Exception:
+                stderr = ""
+            try:
+                rc = proc.wait(timeout=60 * 60)
+            except subprocess.TimeoutExpired:
+                try: proc.kill()
+                except Exception: pass
+                rc = -1
+            # Unregister the child PID once the process is gone.
+            _update_job(job_id, _ffmpeg_pid=None)
+        else:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True, text=True,
+                timeout=60 * 60,  # 1h ceiling
+                creationflags=(
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    | _BELOW_NORMAL_PRIORITY
+                ),
+            )
+            rc = proc.returncode
+            stderr = proc.stderr or ""
     except Exception as e:
         # ffmpeg crashed or timed out. Clean up the partial file and
         # hand the original back. Logged for triage.
@@ -422,10 +1119,54 @@ def _transcode_to_ae_friendly(in_path, job_id=None):
         except Exception: pass
         return str(in_path)
 
-    if proc.returncode != 0:
-        print(f"[yt-dl] ffmpeg exit {proc.returncode} on {in_path.name}: {proc.stderr[-400:]}", file=sys.stderr)
+    if rc != 0:
+        tail = (stderr or "")[-400:]
+        print(
+            f"[yt-dl] {codec} exit {rc} on {in_path.name}: {tail}",
+            file=sys.stderr,
+        )
         try: out_path.unlink()
         except Exception: pass
+
+        # Auto-fallback: if hwaccel just crashed, retry once on
+        # libx264. Covers the case where ffmpeg advertised NVENC but
+        # the user's actual driver/GPU rejected something. We also
+        # set the runtime gate so subsequent jobs in this session
+        # skip hwaccel entirely instead of repeatedly hitting the
+        # same crash + fallback chain (5-10s wasted per job).
+        if not _force_software and codec != "libx264":
+            _HWACCEL_DISABLED_AT_RUNTIME = True
+            print(
+                f"[yt-dl] disabling {codec} for the rest of this "
+                f"session after first failure",
+                file=sys.stderr,
+            )
+            if job_id is not None:
+                _update_job(
+                    job_id,
+                    status="transcoding",
+                    percent=1,
+                    eta="GPU encode failed, retrying on CPU...",
+                )
+            return _transcode_to_ae_friendly(
+                in_path, job_id=job_id, _force_software=True,
+            )
+
+        # Final failure -- both paths gave up. Surface the last
+        # meaningful line of ffmpeg stderr in the job's error field
+        # so the user can see WHY in the active queue / convert
+        # toast, not just "failed".
+        if job_id is not None:
+            err_line = ""
+            for line in reversed((tail or "").splitlines()):
+                line = line.strip()
+                if line:
+                    err_line = line
+                    break
+            _update_job(
+                job_id,
+                error=(err_line or f"ffmpeg exited {rc}")[:200],
+            )
         return str(in_path)
 
     # Replace the original. If the original is .mp4 the rename in-place
@@ -809,6 +1550,19 @@ def _do_download(job_id, url, params):
     else:
         opts["format"] = _fmt_selector(format_ext, resolution)
         opts["merge_output_format"] = format_ext
+        # Override yt-dlp's default format ranking. The default sorts
+        # primarily by resolution and quietly prefers AV1 codec at
+        # equal resolution -- which on YouTube is the AGGRESSIVELY
+        # bitrate-optimized variant (e.g. format 401 AV1 2160p at
+        # 1.8 Mbps, vs format 313 VP9 2160p at 4+ Mbps for the same
+        # video). Real-world result: we'd download the half-bitrate
+        # AV1 stream and the AE-friendly transcode would only get
+        # ~2 Mbps of source data to work with.
+        #
+        # New ranking: resolution → total bitrate → VP9 → H.264.
+        # AV1 falls last because YouTube's AV1 streams are systemati-
+        # cally lower-bitrate than the VP9 equivalents.
+        opts["format_sort"] = ["res", "tbr", "vcodec:vp9", "vcodec:h264"]
         opts["postprocessors"] = _postprocessors("video", format_ext, None, with_thumbnail_embed=True, want_thumbnail=want_thumbnail)
 
     try:
@@ -1384,21 +2138,22 @@ def api_history_rename(job_id):
     return jsonify({"ok": True, "entry": target, "files_renamed": True})
 
 
-@app.route("/api/history/convert_ae/<job_id>", methods=["POST"])
-def api_history_convert_ae(job_id):
-    """One-shot 'make this old download AE-friendly' button. Locates the
-    history entry's video file and runs the same H.264/AAC transcode the
-    fresh-download path does. Idempotent -- if the file is already H.264
-    AAC ffmpeg just re-encodes it (still safe, still importable). Returns
-    the updated entry so the client can refresh its row.
+@app.route("/api/history/convert_ae/<entry_id>", methods=["POST"])
+def api_history_convert_ae(entry_id):
+    """Kick off an async H.264/AAC transcode of an existing Downloads
+    entry. Returns immediately with a NEW job id so the frontend can
+    add the convert to its active-queue row and watch real progress
+    via /api/progress_all instead of staring at a spinner.
 
-    Use case: videos downloaded before v1.19 (or in formats yt-dlp picked
-    that AE refused) can be repaired in place without re-downloading.
+    Use case: videos downloaded before v1.19 (or in formats yt-dlp
+    picked that AE refused) can be repaired in place without re-
+    downloading. Idempotent -- if the source is already H.264/AAC
+    ffmpeg just re-encodes it identically.
     """
     hist = _load_history()
     target = None
     for h in hist:
-        if h.get("id") == job_id:
+        if h.get("id") == entry_id:
             target = h
             break
     if not target:
@@ -1410,16 +2165,72 @@ def api_history_convert_ae(job_id):
     if not src or not Path(src).exists():
         return jsonify({"ok": False, "error": "video file missing on disk"}), 404
 
-    new_path = _transcode_to_ae_friendly(src, job_id=None)
-    if new_path == src and not Path(new_path).exists():
-        return jsonify({"ok": False, "error": "ffmpeg unavailable or transcode failed"}), 500
+    if not _ffmpeg_exe_path():
+        return jsonify({"ok": False, "error": "ffmpeg unavailable on this machine"}), 500
 
-    # File extension may have changed (.mkv/.webm -> .mp4). Update the
-    # entry so subsequent open/play/rename all hit the new path.
-    target["filename"] = new_path
-    target["format_ext"] = Path(new_path).suffix.lstrip(".").lower() or target.get("format_ext")
-    _save_history(hist)
-    return jsonify({"ok": True, "entry": target})
+    # Create a job entry the frontend's active queue can poll via
+    # /api/progress_all. Status starts at "transcoding" so the row
+    # reads "encoding for editors..." right away instead of "pending".
+    job_id = uuid.uuid4().hex[:12]
+    title = f"Convert to AE-friendly · {target.get('title') or 'Untitled'}"
+    with jobs_lock:
+        jobs[job_id] = {
+            "id": job_id,
+            "status": "transcoding",
+            "percent": 1,
+            "speed": "",
+            "eta": "encoding for editors...",
+            "filename": None,
+            "title": title,
+            "error": None,
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+        }
+
+    def _convert_worker():
+        try:
+            new_path = _transcode_to_ae_friendly(src, job_id=job_id)
+            # Failure detection: when the transcode skips or fails it
+            # returns the SAME path as the input. A successful run
+            # writes a new .mp4 (potentially with a different
+            # extension if the source was .mkv/.webm) and returns
+            # that path. So "no change to the path" == failure here,
+            # regardless of whether the file still exists.
+            if not new_path or new_path == src:
+                with jobs_lock:
+                    existing_err = (jobs.get(job_id, {}) or {}).get("error")
+                _update_job(
+                    job_id,
+                    status="error",
+                    error=existing_err or "transcode failed -- file unchanged",
+                )
+                return
+            # Update the original Downloads entry so 'open' / 'play' /
+            # 'rename' subsequently hit the new file. The job id we
+            # poll is separate from the entry's stable id, so the
+            # original entry's id stays intact.
+            hist2 = _load_history()
+            for h in hist2:
+                if h.get("id") == entry_id:
+                    h["filename"] = new_path
+                    h["format_ext"] = (
+                        Path(new_path).suffix.lstrip(".").lower()
+                        or h.get("format_ext")
+                    )
+                    break
+            _save_history(hist2)
+            _update_job(
+                job_id,
+                status="done",
+                percent=100,
+                filename=new_path,
+                speed="",
+                eta="",
+            )
+        except Exception as e:
+            _update_job(job_id, status="error", error=str(e))
+
+    threading.Thread(target=_convert_worker, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id, "title": title})
 
 
 @app.route("/api/history/clear", methods=["POST"])
@@ -1581,6 +2392,21 @@ def _heartbeat_monitor():
                 print(f"[yt-dl] shutting down ({reason})")
             except Exception:
                 pass
+            # Cascade-kill any ffmpeg/ffprobe child processes we spawned
+            # so we don't leave orphans hammering the user's CPU after
+            # the app exits. taskkill /F /IM is global -- if other
+            # apps on the system happen to be running ffmpeg they'd
+            # get caught too, but the hit cost is the same as any
+            # uninstaller that kills by image name; we accept it.
+            for image in ("ffmpeg.exe", "ffprobe.exe"):
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/IM", image],
+                        capture_output=True, timeout=4,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                except Exception:
+                    pass
             # os._exit is the only reliable way to stop Flask's dev server
             # from a background thread. It kills the whole process.
             os._exit(0)
@@ -1607,6 +2433,38 @@ def api_progress(job_id):
         if not job:
             return jsonify({"ok": False, "error": "unknown job"}), 404
         return jsonify({"ok": True, "job": dict(job)})
+
+
+@app.route("/api/job/cancel/<job_id>", methods=["POST"])
+def api_job_cancel(job_id):
+    """User-initiated 'stop this' button on an active queue row. Sets
+    a cancel flag the transcode loop checks on every progress line, and
+    if a Popen ffmpeg PID is registered, taskkills it directly so the
+    user gets immediate feedback (instead of waiting for ffmpeg to
+    finish its current chunk). Returns ok regardless of whether the
+    job was findable -- idempotent."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return jsonify({"ok": True, "found": False})
+        pid = job.get("_ffmpeg_pid")
+        # Mark cancel-requested so the streamed-progress read loop
+        # in _transcode_to_ae_friendly bails on its next iteration.
+        job["_cancel_requested"] = True
+        job["status"] = "error"
+        job["error"] = "cancelled"
+        job["eta"] = ""
+        job["speed"] = ""
+    if pid:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True, timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            pass
+    return jsonify({"ok": True, "found": True})
 
 
 @app.route("/api/progress_all", methods=["POST"])
@@ -2121,10 +2979,10 @@ def api_export_data():
         except Exception as e:
             print(f"[export] history bucket failed: {e}", file=sys.stderr)
 
-    # Previous bucket: previous_downloads/ folder + activity.json (log
-    # of deleted items so import can restore the Previous panel).
+    # Trash bucket: trash/ folder + activity.json (log of deleted
+    # items so import can restore the Previously Deleted panel).
     if inc_pv and PREVIOUS_DIR.is_dir():
-        dst_folder = target / "previous_downloads"
+        dst_folder = target / "trash"
         try:
             dst_folder.mkdir(parents=True, exist_ok=True)
             for child in PREVIOUS_DIR.iterdir():
@@ -2185,9 +3043,13 @@ def api_import_data():
     except Exception:
         pass
 
-    # Sanity check the shape before we do any work.
+    # Sanity check the shape before we do any work. Accept the current
+    # `trash/` name plus both legacy names (`previously_deleted/`,
+    # `previous_downloads/`) so older exports still import.
     has_anything = (
         (src / "downloads").is_dir()
+        or (src / "trash").is_dir()
+        or (src / "previously_deleted").is_dir()
         or (src / "previous_downloads").is_dir()
         or (src / "history.json").is_file()
         or (src / "activity.json").is_file()
@@ -2196,8 +3058,8 @@ def api_import_data():
         return jsonify({
             "ok": False,
             "error": "folder doesn't look like a YT Grab export "
-                     "(no downloads/, previous_downloads/, "
-                     "history.json, or activity.json)",
+                     "(no downloads/, trash/, history.json, or "
+                     "activity.json)",
         }), 400
 
     result = {
@@ -2209,9 +3071,18 @@ def api_import_data():
     }
 
     # Per-video folders: copy subdirectories that don't already exist.
+    # The export uses the current folder name (`trash/`) but legacy
+    # exports used `previously_deleted/` (1.19) or `previous_downloads/`
+    # (pre-1.19) -- pick whichever exists in the source.
+    if (src / "trash").is_dir():
+        _prev_export_name = "trash"
+    elif (src / "previously_deleted").is_dir():
+        _prev_export_name = "previously_deleted"
+    else:
+        _prev_export_name = "previous_downloads"
     for folder_name, added_key, skipped_key, dst_base in (
-        ("downloads",          "downloads_added", "downloads_skipped", DOWNLOADS_DIR),
-        ("previous_downloads", "previous_added",  "previous_skipped",  PREVIOUS_DIR),
+        ("downloads",         "downloads_added", "downloads_skipped", DOWNLOADS_DIR),
+        (_prev_export_name,   "previous_added",  "previous_skipped",  PREVIOUS_DIR),
     ):
         src_folder = src / folder_name
         if not src_folder.is_dir():
