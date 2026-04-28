@@ -28,6 +28,31 @@ from tkinter import ttk
 
 # --- Paths ------------------------------------------------------------
 
+# Uninstaller log -- shared with the PowerShell self-delete script so
+# the user has ONE place to look for what happened during an uninstall.
+# Lives in %TEMP% because the install dir gets wiped by the time most
+# of these lines are written, and %TEMP% survives the wipe.
+_UNINSTALL_LOG = Path(
+    os.environ.get("TEMP", r"C:\Windows\Temp")
+) / "ytgrab-uninst.log"
+
+
+def _uninstall_log(msg):
+    """Append one timestamped line to the uninstall log. Safe to call
+    even when the log file is locked (silently drops the line). Also
+    echoes to stderr so the line shows up in any attached console."""
+    line = f"[{datetime.now().isoformat(timespec='seconds')}] {msg}"
+    try:
+        with open(_UNINSTALL_LOG, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        print(line, file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _install_dir() -> Path:
     """Folder containing this uninstaller.
 
@@ -115,12 +140,20 @@ class UninstallerWorker:
             self.progress(P_LINKS)
 
             self._wipe_webview_cache()
+            self._wipe_yt_dlp_cache()
             self.progress(P_WEBVIEW)
+
+            # Drop the Apps & Features registration BEFORE the
+            # install-dir wipe -- the registry write is independent of
+            # the install dir, and we want it gone the instant the
+            # user clicks Uninstall (so they don't see "YT Grab" still
+            # listed in Settings while the file wipe is in flight).
+            self._unregister_arp_entry()
 
             # The install folder IS the "app data" folder in the
             # bootstrapper-based install, so a single self-delete of
-            # INSTALL_DIR wipes downloads/, previous_downloads/,
-            # debug.log, version.txt and the three .exes in one shot.
+            # INSTALL_DIR wipes downloads/, trash/, debug.log,
+            # version.txt and the .exes in one shot.
             self._schedule_self_delete()
             self.progress(P_SCHEDULE)
         except Exception as exc:  # noqa: BLE001
@@ -158,10 +191,16 @@ class UninstallerWorker:
         # YTGrabSetup.exe from pre-1.17 standalone updater) are still
         # in the list so this uninstaller cleans up cleanly on older
         # installs without the user knowing which version they were on.
+        # ALSO kill ffmpeg/ffprobe -- the app spawns them as transcode
+        # children and they survive their parent on Windows. v1.20 fix:
+        # without this, runaway transcodes kept eating CPU even after
+        # the user uninstalled the app (real reported case).
         for image in (
             "YTGrab.exe",          # the app (v1.18+, and legacy Flask app <=1.16)
             "YTGrabApp.exe",       # v1.17 bundled-wrapper intermediate
             "YTGrabSetup.exe",     # pre-1.17 standalone updater
+            "ffmpeg.exe",          # transcode child (orphaned on parent exit)
+            "ffprobe.exe",         # duration probe child
         ):
             try:
                 subprocess.run(
@@ -219,6 +258,83 @@ class UninstallerWorker:
                     lnk.unlink()
                 except Exception:  # noqa: BLE001
                     pass
+
+    def _wipe_yt_dlp_cache(self):
+        """yt-dlp creates ~/.cache/yt-dlp at first download to cache
+        per-site extractor metadata. It survives uninstall by default
+        because nothing else cleans it. Typical size 5-50 MB; not
+        user content (no downloaded videos, no cookies) -- just
+        extractor lookup tables. Wiping it makes uninstall fully
+        clean instead of leaving a few MB of orphans behind."""
+        self.status("Clearing yt-dlp cache...")
+        cache = Path.home() / ".cache" / "yt-dlp"
+        if cache.is_dir():
+            try:
+                shutil.rmtree(cache, ignore_errors=True)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _unregister_arp_entry(self):
+        """Remove the Apps & Features registry key created by the
+        installer's _register_uninstall_entry. After this, the user no
+        longer sees "YT Grab" in Settings → Apps. HKCU only -- per-user
+        install needs no admin permission to delete.
+
+        Recursive delete: winreg.DeleteKey FAILS if the key has any
+        subkeys (Windows requires you to delete children first). We
+        enumerate subkeys, delete each, then drop the parent. Also
+        logs each step so we can see exactly where deletion bailed
+        if it ever does.
+        """
+        self.status("Removing from Apps & Features...")
+        path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\YTGrab"
+        _uninstall_log(f"[arp] target = HKCU\\{path}")
+        if sys.platform != "win32":
+            _uninstall_log("[arp] skipped (non-Windows)")
+            return
+        try:
+            import winreg
+        except ImportError as e:
+            _uninstall_log(f"[arp] winreg unavailable: {e}")
+            return
+
+        def _delete_recursive(root, key_path):
+            """Walk into a key, delete its children depth-first, then
+            delete the key itself. Returns True on success."""
+            try:
+                with winreg.OpenKey(root, key_path, 0, winreg.KEY_READ) as k:
+                    sub_names = []
+                    i = 0
+                    while True:
+                        try:
+                            sub_names.append(winreg.EnumKey(k, i))
+                            i += 1
+                        except OSError:
+                            break
+            except FileNotFoundError:
+                _uninstall_log(f"[arp] {key_path} not present (already gone?)")
+                return True
+            except Exception as e:  # noqa: BLE001
+                _uninstall_log(f"[arp] open-for-enum failed on {key_path}: {e}")
+                return False
+            for name in sub_names:
+                child = key_path + "\\" + name
+                _uninstall_log(f"[arp] removing subkey {child}")
+                if not _delete_recursive(root, child):
+                    return False
+            try:
+                winreg.DeleteKey(root, key_path)
+                _uninstall_log(f"[arp] removed {key_path}")
+                return True
+            except FileNotFoundError:
+                _uninstall_log(f"[arp] {key_path} disappeared mid-delete")
+                return True
+            except Exception as e:  # noqa: BLE001
+                _uninstall_log(f"[arp] DeleteKey failed on {key_path}: {e}")
+                return False
+
+        ok = _delete_recursive(winreg.HKEY_CURRENT_USER, path)
+        _uninstall_log(f"[arp] final result = {'OK' if ok else 'FAIL'}")
 
     def _wipe_webview_cache(self):
         """Wipe %LOCALAPPDATA%\\YTGrab\\ -- WebView2's user-data dir
@@ -279,7 +395,12 @@ class UninstallerWorker:
             "$ErrorActionPreference = 'SilentlyContinue'; "
             f"$target = '{target_ps}'; "
             f"$log = '{logpath_ps}'; "
-            "Set-Content -Path $log -Value \"=== YTGrab uninstall cleanup ===\"; "
+            # Add-Content (not Set-Content) -- the Python uninstaller
+            # has already written [arp] and other diagnostic lines to
+            # this log; overwriting them with Set-Content was wiping
+            # the very evidence we need to debug uninstaller bugs.
+            "Add-Content -Path $log -Value \"\"; "
+            "Add-Content -Path $log -Value \"=== YTGrab uninstall cleanup (PowerShell self-delete phase) ===\"; "
             "Add-Content -Path $log -Value \"Start: $(Get-Date)\"; "
             "Add-Content -Path $log -Value \"Target: $target\"; "
             # Wait for the uninstaller Python process to fully exit.
@@ -289,6 +410,8 @@ class UninstallerWorker:
             "Stop-Process -Name YTGrabApp -Force 2>$null; "
             "Stop-Process -Name YTGrabSetup -Force 2>$null; "
             "Stop-Process -Name YTGrabUninstaller -Force 2>$null; "
+            "Stop-Process -Name ffmpeg -Force 2>$null; "
+            "Stop-Process -Name ffprobe -Force 2>$null; "
             "Start-Sleep -Milliseconds 500; "
             # Retry loop: handles released asynchronously, so we poll.
             "for ($i = 1; $i -le 10; $i++) { "
@@ -306,7 +429,17 @@ class UninstallerWorker:
             "} else { "
             "  Add-Content -Path $log -Value "
             "    \"SUCCESS: folder removed at $(Get-Date)\" "
-            "}"
+            "} "
+            # Belt + suspenders for the registry: even if the Python
+            # _unregister_arp_entry already ran successfully, this is a
+            # cheap idempotent re-delete that guarantees the Apps &
+            # Features entry is gone after the PowerShell phase
+            # finishes -- catches the case where Python crashed before
+            # reaching its registry step.
+            "Remove-Item -Path "
+            "  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\YTGrab' "
+            "  -Recurse -Force -ErrorAction SilentlyContinue; "
+            "Add-Content -Path $log -Value \"[arp] PS belt-suspenders Remove-Item completed\""
         )
 
         try:

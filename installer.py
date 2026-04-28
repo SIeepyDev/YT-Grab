@@ -46,7 +46,12 @@ import threading
 import time
 import traceback
 import urllib.request
+import uuid
 from pathlib import Path
+
+# winreg is Windows-only stdlib. Imported inside _register_uninstall_entry
+# so the module still loads cleanly on the dev side (Linux sandbox /
+# macOS) where this file may be syntax-checked but never executed.
 
 
 # --- Identity --------------------------------------------------------
@@ -58,6 +63,25 @@ RELEASE_API  = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/relea
 EXE_NAME        = "YTGrab.exe"
 UNINST_NAME     = "YTGrabUninstaller.exe"
 VERSION_FILE    = "version.txt"
+INSTALL_ID_FILE = "install_id.txt"
+
+# App version source-of-truth, baked into the binary at build time.
+# DO NOT pull this from GitHub at install time -- that breaks for the
+# very first install of any new version (GitHub's `releases/latest`
+# still points at the PREVIOUS version until the new release is
+# uploaded). Instead, bump APP_VERSION here as part of the same
+# commit that bumps `.release-please-manifest.json`. The Apps &
+# Features DisplayVersion uses this directly so a fresh v1.19.1
+# install shows 1.19.1 in Settings, not whatever GitHub had latest
+# when build.bat ran.
+APP_VERSION = "1.19.1"
+
+# Apps & Features (Add/Remove Programs) registry key. HKCU because we
+# install per-user with no admin elevation -- HKLM would require UAC.
+# Naming "YTGrab" not "YT Grab" so the registry path is shell-safe.
+ARP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\YTGrab"
+ARP_DISPLAY_NAME = "YT Grab"
+ARP_PUBLISHER    = "Sleepy Productions"
 
 # Per-user install location; no admin required.
 INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", "")).resolve() / "Programs" / "YTGrab"
@@ -241,24 +265,41 @@ def _do_install_steps(log, progress):
     progress(0.20)
     _self_copy_into_install_dir()
 
-    # Download the uninstaller from the GitHub release. If GitHub is
-    # unreachable, surface it -- the uninstaller IS part of a complete
-    # install, and the user can retry once they're back online.
-    log("Fetching YTGrabUninstaller.exe...")
+    # Extract the bundled YTGrabUninstaller.exe out of our own
+    # PyInstaller data resources. Used to download from GitHub but
+    # that broke pre-release testing -- a v1.19.1 YTGrab.exe would
+    # download the v1.18 uninstaller (whatever was on releases/latest)
+    # and the v1.19 install code's expectations would fail silently
+    # (e.g. v1.19's _unregister_arp_entry would never run because
+    # the v1.18 uninstaller didn't have it). Bundling guarantees the
+    # uninstaller version always matches the installer's version.
+    log("Extracting uninstaller...")
     progress(0.35)
-    _download_uninstaller_from_github(progress_range=(0.35, 0.85))
+    _extract_bundled_uninstaller()
+    progress(0.85)
 
     log("Creating shortcuts...")
     progress(0.88)
     _create_shortcuts()
 
     # Persist version; auto-update on later launches uses this.
-    version = _fetch_latest_version_string()
-    if version:
-        try:
-            (INSTALL_DIR / VERSION_FILE).write_text(version, encoding="utf-8")
-        except Exception:
-            pass
+    # Source priority: APP_VERSION (baked at build time) > whatever
+    # GitHub's releases/latest reports. This way a brand-new release
+    # registers with its own version even before the GitHub tag/release
+    # has been published.
+    version = APP_VERSION or _fetch_latest_version_string() or "1.0.0"
+    try:
+        (INSTALL_DIR / VERSION_FILE).write_text(version, encoding="utf-8")
+    except Exception:
+        pass
+
+    # Register with Windows "Apps & Features" so users can uninstall
+    # via the standard path (Settings → Apps → installed apps).
+    # Without this the app looks like malware to anything scanning
+    # for unregistered installs (AV, CCleaner, system audits).
+    log("Registering with Apps & Features...")
+    progress(0.92)
+    _register_uninstall_entry(version)
     progress(0.94)
 
     log("Launching YT Grab...")
@@ -343,6 +384,13 @@ def _maybe_self_update() -> bool:
     except Exception:
         pass
 
+    # Refresh the Apps & Features DisplayVersion so Settings shows
+    # the post-update version, not the pre-update one. Best-effort.
+    try:
+        _register_uninstall_entry(target)
+    except Exception:
+        pass
+
     try:
         subprocess.Popen(
             [str(current)],
@@ -412,24 +460,42 @@ def _is_newer(latest: str, current: str) -> bool:
         return False
 
 
-def _download_uninstaller_from_github(progress_range=(0.0, 1.0)):
-    latest = _fetch_latest_release()
-    if latest is None:
+def _extract_bundled_uninstaller():
+    """Copy YTGrabUninstaller.exe out of our PyInstaller bundle to
+    INSTALL_DIR. Replaces the v1.19 download-from-GitHub path which
+    had a chicken-and-egg bug: a brand-new v1.19.1 YTGrab.exe would
+    download whatever YTGrabUninstaller.exe was tagged "latest" on
+    GitHub at that moment -- and during pre-release testing that's
+    the OLD v1.18 uninstaller, which doesn't have the registry-
+    cleanup code the new YTGrab.exe expects.
+
+    Bundle source path:
+      * Frozen build:  sys._MEIPASS / YTGrabUninstaller.exe
+      * Dev mode:      <repo>/dist/YTGrabUninstaller.exe (if you've
+                       built it; otherwise this raises and you should
+                       run build.bat first)
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        src = Path(sys._MEIPASS) / UNINST_NAME  # noqa: SLF001
+    else:
+        src = Path(__file__).resolve().parent / "dist" / UNINST_NAME
+    if not src.is_file():
         raise RuntimeError(
-            "Can't reach GitHub to download the uninstaller. "
-            "Check your internet connection and re-run YTGrab.exe."
+            f"{UNINST_NAME} missing from bundle. This is a build-side "
+            f"packaging error -- YTGrab.spec didn't include it. "
+            f"Rebuild with build.bat (which builds Uninstaller.spec "
+            f"BEFORE YTGrab.spec so the bundle has it)."
         )
-    url = None
-    for a in latest.get("assets", []):
-        if a.get("name") == UNINST_NAME:
-            url = a.get("browser_download_url")
-            break
-    if not url:
-        raise RuntimeError(
-            f"Release is missing asset: {UNINST_NAME}. This is a "
-            f"packaging error -- please report it."
-        )
-    _download_url(url, INSTALL_DIR / UNINST_NAME, progress_range)
+    target = INSTALL_DIR / UNINST_NAME
+    try:
+        if target.exists():
+            try:
+                target.unlink()
+            except Exception:
+                pass
+        shutil.copy2(src, target)
+    except Exception as exc:
+        raise RuntimeError(f"Couldn't extract {UNINST_NAME}: {exc}") from exc
 
 
 def _download_url(url: str, target: Path, progress_range=(0.0, 1.0),
@@ -466,6 +532,97 @@ def _download_url(url: str, target: Path, progress_range=(0.0, 1.0),
                 tmp.unlink()
             except Exception:
                 pass
+
+
+def _get_or_create_install_id():
+    """Stable per-install UUID. Persisted at INSTALL_DIR/install_id.txt
+    so it survives auto-updates (we write/read the install dir on every
+    update, but only create the UUID once on first install). Future
+    versions read this back to detect upgrade-vs-fresh-install. Always
+    returns a string; generates one on first call if the file is missing."""
+    p = INSTALL_DIR / INSTALL_ID_FILE
+    if p.is_file():
+        try:
+            existing = p.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        except Exception:
+            pass
+    new_id = str(uuid.uuid4())
+    try:
+        p.write_text(new_id, encoding="utf-8")
+    except Exception:
+        pass
+    return new_id
+
+
+def _install_dir_size_kb():
+    """Walk INSTALL_DIR and sum file sizes in KB. Used for the
+    EstimatedSize value in the Apps & Features registration. The
+    number is informational only -- Windows doesn't enforce or
+    auto-update it -- so a one-time snapshot at install time is fine."""
+    total = 0
+    try:
+        for root, _dirs, files in os.walk(INSTALL_DIR):
+            for fn in files:
+                try:
+                    total += (Path(root) / fn).stat().st_size
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return max(1, total // 1024)
+
+
+def _register_uninstall_entry(version):
+    """Write the standard Apps & Features registry keys under HKCU
+    so the user can find + uninstall via Settings → Apps → installed
+    apps (instead of being limited to our Desktop/Start Menu shortcut).
+
+    HKCU not HKLM: per-user install, no UAC prompt at install time.
+    HKLM would require admin elevation we don't ask for.
+
+    Includes a stable install_id (UUID) so future versions can tell
+    upgrade-from-1.19.1 vs fresh-install. Without an ID, an upgrade
+    looks identical to a fresh install in terms of registry state.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+    except ImportError:
+        return
+
+    install_id = _get_or_create_install_id()
+    install_loc = str(INSTALL_DIR)
+    uninst_str  = str(INSTALL_DIR / UNINST_NAME)
+    icon_str    = f"{INSTALL_DIR / EXE_NAME},0"
+    size_kb     = _install_dir_size_kb()
+
+    try:
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER,
+            ARP_KEY,
+            0,
+            winreg.KEY_WRITE,
+        ) as k:
+            winreg.SetValueEx(k, "DisplayName",     0, winreg.REG_SZ, ARP_DISPLAY_NAME)
+            winreg.SetValueEx(k, "DisplayVersion",  0, winreg.REG_SZ, str(version))
+            winreg.SetValueEx(k, "Publisher",       0, winreg.REG_SZ, ARP_PUBLISHER)
+            winreg.SetValueEx(k, "InstallLocation", 0, winreg.REG_SZ, install_loc)
+            winreg.SetValueEx(k, "UninstallString", 0, winreg.REG_SZ, uninst_str)
+            winreg.SetValueEx(k, "DisplayIcon",     0, winreg.REG_SZ, icon_str)
+            winreg.SetValueEx(k, "InstallID",       0, winreg.REG_SZ, install_id)
+            winreg.SetValueEx(k, "URLInfoAbout",    0, winreg.REG_SZ,
+                              "https://github.com/SIeepyDev/YT-Grab")
+            winreg.SetValueEx(k, "EstimatedSize",   0, winreg.REG_DWORD, int(size_kb))
+            winreg.SetValueEx(k, "NoModify",        0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(k, "NoRepair",        0, winreg.REG_DWORD, 1)
+    except Exception:
+        # Registry failure is non-fatal -- the install proceeds, the
+        # app works, the user just won't see it in Apps & Features
+        # (they still have the shortcut).
+        pass
 
 
 def _self_copy_into_install_dir():
