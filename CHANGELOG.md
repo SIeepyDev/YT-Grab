@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.20.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.19.0...v1.20.0) (2026-04-28)
+
+
+### Features
+
+* AE-friendly H.264 transcode with NVENC/AMF/QSV + libx264 fallback ([4de8469](https://github.com/SIeepyDev/YT-Grab/commit/4de846917009c66d70fab1c9446b081f13f4e452))
+* register with Windows Apps & Features for clean uninstall ([3e637ed](https://github.com/SIeepyDev/YT-Grab/commit/3e637ed9e1dab667e6746551864e428d591145b1))
+
+
+### Bug Fixes
+
+* bundle YTGrabUninstaller.exe inside YTGrab.exe ([0f39ebf](https://github.com/SIeepyDev/YT-Grab/commit/0f39ebf179f8246a00ab2c4e4d7b2e1bd4cf8561))
+* color picker shows picked color, no more hex input clutter ([f348966](https://github.com/SIeepyDev/YT-Grab/commit/f348966460eceba5e8b94a814093b9ff04826b15))
+
+
+### Docs
+
+* file inventory + uninstaller audit ([affcf8c](https://github.com/SIeepyDev/YT-Grab/commit/affcf8c462f52db444e5cc7fdab6716bb42ee1ce))
+
 ## [1.19.0](https://github.com/SIeepyDev/YT-Grab/compare/v1.18.0...v1.19.0) (2026-04-25)
 
 
