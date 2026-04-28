@@ -31,6 +31,23 @@ if "%GH_PAT%"=="" (
     goto end
 )
 
+REM --- Diagnostic: dump the state release.bat is operating against.
+REM The existence check below uses a path relative to CWD. If
+REM something silently broke `cd /d "%~dp0"` above, CWD will be
+REM something other than the script dir and `dist\YTGrab.exe` will
+REM resolve to the wrong place. This block makes that visible
+REM instead of letting it look like the build never produced the
+REM files. No theory about why that might happen -- the logs tell us.
+echo [release] cwd        = %CD%
+echo [release] script dir = %~dp0
+echo [release] dist\ contents:
+if exist "dist\" (
+    dir /b "dist\"
+) else (
+    echo [release]   ^(dist\ folder does not exist^)
+)
+echo.
+
 if not exist "dist\YTGrab.exe"            goto err_nobuild
 if not exist "dist\YTGrabUninstaller.exe" goto err_nobuild
 

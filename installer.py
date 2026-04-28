@@ -65,16 +65,45 @@ UNINST_NAME     = "YTGrabUninstaller.exe"
 VERSION_FILE    = "version.txt"
 INSTALL_ID_FILE = "install_id.txt"
 
-# App version source-of-truth, baked into the binary at build time.
-# DO NOT pull this from GitHub at install time -- that breaks for the
-# very first install of any new version (GitHub's `releases/latest`
-# still points at the PREVIOUS version until the new release is
-# uploaded). Instead, bump APP_VERSION here as part of the same
-# commit that bumps `.release-please-manifest.json`. The Apps &
-# Features DisplayVersion uses this directly so a fresh v1.19.1
-# install shows 1.19.1 in Settings, not whatever GitHub had latest
-# when build.bat ran.
-APP_VERSION = "1.19.1"
+
+def _read_app_version():
+    """Read the canonical app version from the bundled
+    .release-please-manifest.json. release-please owns this file --
+    every release PR merge bumps it -- so by reading it here we
+    guarantee APP_VERSION never drifts from the git tag.
+
+    Source priority:
+      * Frozen build:  sys._MEIPASS / .release-please-manifest.json
+                       (file bundled into YTGrab.exe by YTGrab.spec)
+      * Dev mode:      <repo>/.release-please-manifest.json
+      * Fallback:      "0.0.0" (only hit if the manifest was somehow
+                       not bundled -- a build bug worth surfacing)
+
+    Replaces the v1.19 hardcoded APP_VERSION constant which had to be
+    bumped manually before each release. v1.19.1 shipped with
+    APP_VERSION="1.19.1" stuck at the same value through what should
+    have been a v1.20.0 release; the registry wrote the stale 1.19.1
+    while every other surface read 1.20.0 from the manifest. This
+    function closes that gap.
+    """
+    candidates = []
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidates.append(Path(sys._MEIPASS) / ".release-please-manifest.json")  # noqa: SLF001
+    candidates.append(Path(__file__).resolve().parent / ".release-please-manifest.json")
+    for p in candidates:
+        if not p.is_file():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            v = data.get(".") or data.get("yt-grab")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        except Exception:
+            continue
+    return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
 
 # Apps & Features (Add/Remove Programs) registry key. HKCU because we
 # install per-user with no admin elevation -- HKLM would require UAC.

@@ -83,6 +83,20 @@ if not os.path.isfile(_uninst):
     )
 datas += [(_uninst, '.')]
 
+# Bundle the release-please manifest so installer.py's APP_VERSION
+# reader can pull the version directly from release-please's source
+# of truth. Stops the "registry shows 1.19.1, manifest says 1.20.0"
+# desync from ever recurring.
+_manifest = '.release-please-manifest.json'
+if not os.path.isfile(_manifest):
+    raise SystemExit(
+        f"[YTGrab.spec] Missing {_manifest}. This file is checked "
+        f"into the repo and tracks the release version. If you're "
+        f"building from a tarball without it, copy from the source "
+        f"git checkout."
+    )
+datas += [(_manifest, '.')]
+
 a = Analysis(
     ['server.py'],
     pathex=[],
