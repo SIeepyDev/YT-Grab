@@ -65,6 +65,24 @@ datas += collect_data_files('imageio_ffmpeg')
 # pywebview ships a small amount of JS for its Python<->JS bridge.
 datas += collect_data_files('webview')
 
+# Bundle the standalone YTGrabUninstaller.exe inside YTGrab.exe so
+# the install flow can extract it locally instead of downloading from
+# GitHub. The download approach broke pre-release testing: a v1.19.1
+# YTGrab.exe installed against a GitHub releases/latest that still
+# pointed at v1.18.0 would download the v1.18 uninstaller -- missing
+# new fields the v1.19 installer expected (registry deletion, etc.).
+# Bundling guarantees the uninstaller version always matches the
+# YTGrab.exe that installed it. build.bat MUST build Uninstaller.spec
+# BEFORE YTGrab.spec so this file exists at PyInstaller analysis time.
+_uninst = os.path.join('dist', 'YTGrabUninstaller.exe')
+if not os.path.isfile(_uninst):
+    raise SystemExit(
+        f"[YTGrab.spec] Missing {_uninst}. build.bat must build "
+        f"Uninstaller.spec FIRST so YTGrabUninstaller.exe exists "
+        f"when this spec runs."
+    )
+datas += [(_uninst, '.')]
+
 a = Analysis(
     ['server.py'],
     pathex=[],

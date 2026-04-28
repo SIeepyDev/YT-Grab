@@ -47,17 +47,21 @@ echo [yt-dl build] Checking for bundled ffmpeg + ffprobe...
 if not exist "bin\ffprobe.exe" call fetch_ffmpeg.bat
 if not exist "bin\ffprobe.exe" goto err_ffmpeg
 
+REM Build order matters: YTGrab.spec bundles dist\YTGrabUninstaller.exe
+REM as a PyInstaller data resource so the install flow can extract the
+REM uninstaller locally instead of downloading from GitHub. That means
+REM YTGrabUninstaller.exe MUST exist before YTGrab.spec runs.
+echo.
+echo [yt-dl build] Building YTGrabUninstaller.exe (bundled into YTGrab.exe below)...
+venv\Scripts\python.exe -m PyInstaller --clean Uninstaller.spec
+if errorlevel 1 goto err_pyinstaller_uninst
+if not exist "dist\YTGrabUninstaller.exe" goto err_nouninst
+
 echo.
 echo [yt-dl build] Building YTGrab.exe. This takes 30-90 seconds the first time.
 venv\Scripts\python.exe -m PyInstaller --clean YTGrab.spec
 if errorlevel 1 goto err_pyinstaller
 if not exist "dist\YTGrab.exe" goto err_nooutput
-
-echo.
-echo [yt-dl build] Building YTGrabUninstaller.exe...
-venv\Scripts\python.exe -m PyInstaller --clean Uninstaller.spec
-if errorlevel 1 goto err_pyinstaller_uninst
-if not exist "dist\YTGrabUninstaller.exe" goto err_nouninst
 
 echo ==================================================
 echo [yt-dl build] DONE
