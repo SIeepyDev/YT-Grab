@@ -1228,6 +1228,35 @@
   }
   .job-status .js-pct { color: var(--text-2); font-weight: 500; }
   .job-status .js-sep { color: var(--text-4); }
+  /* Cancel button on each active queue row -- compact ✕. Stays out of
+     the way visually until hover. Colors flip red on hover so the user
+     knows it's a destructive action. */
+  .job-status .js-cancel {
+    margin-left: 4px;
+    width: 18px; height: 18px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--border-2);
+    color: var(--text-3);
+    border-radius: 50%;
+    font-family: var(--font);
+    font-size: 11px; line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.12s;
+  }
+  .job-status .js-cancel:hover {
+    border-color: #f87171;
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+  }
+  .job-status .js-cancel:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  /* Hide the cancel button once a job is finished (done or error). */
+  .job.done .js-cancel,
+  .job.error .js-cancel { display: none; }
   .job-actions { display: flex; gap: 8px; margin-top: 10px; }
   .job-actions button {
     padding: 5px 10px; background: transparent; border: 1px solid var(--border-2);
@@ -1406,36 +1435,63 @@
          Bumped from 0.14 → 0.32 alpha + larger spread so the picker
          visibly glows the color you're picking, not just hints at it. */
       0 0 38px 4px rgba(var(--accent-rgb), 0.32);
-    /* Liquid Glass fill — translucent disc that picks up the live
-       hue. Two stacked hue-tint pools (upper-left + lower-right) so
-       the tint reads from any angle instead of pooling in just one
-       quadrant; both alpha bumped well past the previous "barely
-       visible" 0.18 so the picked color actually shows on the glass. */
+    /* Liquid Glass disc with two-pool hue bleed underneath and a
+       reactive picked-color overlay on top. Layer order (back to
+       front), each carrying a distinct job:
+         (1) Crystal frosted base — the "water" of the disc.
+         (2) Hue-family bleed pool, upper-left — vivid, always-on.
+             This is the "fire" gradient look.
+         (3) Hue-family bleed pool, lower-right — secondary bleed
+             so the gradient reads from any angle.
+         (4) Picked-color reactive overlay — moves with full h+s+v.
+             At low saturation it goes gray (which the hue pools
+             beneath keep colored anyway). At high saturation it
+             dominates and the disc reads as that exact color.
+         (5) Soft top→bottom vertical light wash — water weight.
+         (6) Inner-edge vignette — glass-volume depth.
+       Glass-surface details (top crescent, underside reflection,
+       all-around rim) live in ::before / ::after / box-shadow. */
     background:
-      /* soft bottom shade gives the disc a little weight */
-      linear-gradient(to top, rgba(0,0,0,0.22), transparent 62%),
-      /* secondary hue pool — lower-right — so saturation/brightness
-         changes ripple across the whole disc, not just one corner */
+      /* (6) inner edge vignette */
+      radial-gradient(
+        circle at 50% 50%,
+        transparent 56%,
+        rgba(0, 0, 0, 0.16) 100%
+      ),
+      /* (5) top→bottom vertical wash (light catching surface, weight at base) */
+      linear-gradient(
+        to bottom,
+        rgba(255, 255, 255, 0.10) 0%,
+        rgba(255, 255, 255, 0.02) 30%,
+        rgba(0,   0,   0,   0.10) 100%
+      ),
+      /* (4) picked-color reactive overlay -- moves with h+s+v */
+      radial-gradient(
+        ellipse 105% 95% at 50% 52%,
+        rgba(var(--accent-rgb), 0.42) 0%,
+        rgba(var(--accent-rgb), 0.18) 55%,
+        rgba(var(--accent-rgb), 0.06) 80%,
+        transparent 100%
+      ),
+      /* (3) hue bleed pool — lower-right */
       radial-gradient(
         ellipse 100% 100% at 72% 78%,
-        hsla(var(--cp-hue, 270), 80%, 55%, 0.30),
+        hsla(var(--cp-hue, 270), 85%, 50%, 0.42),
         transparent 70%
       ),
-      /* primary hue-tinted sheen pooling upper-left like Apple's
-         Liquid Glass — bumped 0.18 → 0.45 so the disc actually reads
-         as the picked color instead of grey. */
+      /* (2) hue bleed pool — upper-left, the "fire" pool */
       radial-gradient(
-        ellipse 115% 90% at 34% 30%,
-        hsla(var(--cp-hue, 270), 82%, 62%, 0.45),
+        ellipse 115% 90% at 32% 28%,
+        hsla(var(--cp-hue, 270), 88%, 65%, 0.55),
         transparent 70%
       ),
-      /* frosted-glass base — translucent white layer for the crystal look */
-      linear-gradient(135deg,
-        rgba(255,255,255,0.10) 0%,
-        rgba(255,255,255,0.02) 50%,
-        rgba(255,255,255,0.06) 100%);
-    backdrop-filter: blur(18px) saturate(1.4);
-    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+      /* (1) frosted-glass base — the crystal water */
+      linear-gradient(140deg,
+        rgba(255, 255, 255, 0.10) 0%,
+        rgba(255, 255, 255, 0.02) 50%,
+        rgba(255, 255, 255, 0.06) 100%);
+    backdrop-filter: blur(22px) saturate(1.6);
+    -webkit-backdrop-filter: blur(22px) saturate(1.6);
     /* Smooth transitions on the live hue + accent updates so the
        glow + tint feel reactive instead of snapping. */
     transition:
@@ -1476,14 +1532,23 @@
   }
   .cp-sv-cursor {
     position: absolute;
-    width: 10px; height: 10px;
+    width: 12px; height: 12px;
     border-radius: 50%;
     border: 2px solid #fff;
+    /* Background = currently-picked accent so you can read the color
+       right at the cursor without bouncing your eyes to the hex field
+       below. Matches the ring handle's inner-fill pattern. */
+    background: var(--accent);
     transform: translate(-50%, -50%);
     pointer-events: none;
-    box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.4);
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,0.4),
+      0 1px 3px rgba(0,0,0,0.4),
+      /* picked-color halo so the dot itself glows the color */
+      0 0 8px rgba(var(--accent-rgb), 0.55);
     /* Above the liquid-glass ::before/::after overlays on .cp-sv */
     z-index: 2;
+    transition: background 0.12s ease, box-shadow 0.12s ease;
   }
   .cp-hex {
     width: 100%; max-width: 150px;
@@ -2261,9 +2326,6 @@
               <div class="cp-sv-cursor" id="cp-sv-cursor"></div>
             </div>
           </div>
-          <input type="text" class="cp-hex" id="cp-hex"
-                 spellcheck="false" maxlength="7" value="#8A5CF6"
-                 aria-label="Accent color hex">
           <p class="cp-hint">
             <em>Ring</em> picks hue · <em>inside</em> picks saturation &amp; brightness
           </p>
@@ -4424,6 +4486,7 @@
           <span class="js-pct">0%</span>
           <span class="js-sep">·</span>
           <span class="js-rate">pending…</span>
+          <button class="js-cancel" title="Cancel">✕</button>
         </div>
       </div>
       <div class="job-progress-outer"><div class="job-progress-inner" style="width:0%"></div></div>
@@ -4433,6 +4496,20 @@
       </div>`;
     jobs.insertBefore(div, jobs.firstChild);
     activeJobs.set(job_id, { element: div });
+    // Wire the cancel button -- hits the server, which marks the job
+    // and taskkills the ffmpeg child immediately. The next poll sees
+    // status='error' / error='cancelled' and finishes the row.
+    const cancelBtn = div.querySelector('.js-cancel');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = '…';
+        try {
+          await api('POST', '/api/job/cancel/' + encodeURIComponent(job_id));
+        } catch (_) {}
+      });
+    }
     _ensureMasterPoller();  // starts/keeps the single batched poller alive
   }
 
@@ -4481,6 +4558,11 @@
     pct.textContent = (job.percent || 0) + '%';
     if (job.status === 'downloading') {
       rate.textContent = job.speed ? `${job.speed} · ETA ${job.eta || '—'}` : (job.eta || 'downloading…');
+    } else if (job.status === 'transcoding') {
+      // Auto-transcode-on-download AND the per-row "Convert to
+      // AE-friendly" both surface here. The job's eta carries the
+      // current pct as a string like "47%" so it reads naturally.
+      rate.textContent = job.eta ? `transcoding · ${job.eta}` : 'transcoding…';
     } else if (job.status === 'pending') {
       rate.textContent = 'starting…';
     } else if (job.status === 'done') {
@@ -4666,21 +4748,29 @@
 
   // -------------------------------------------------------------------------
   // Convert an existing Downloads entry to an AE-friendly mp4 (H.264/AAC).
-  // Hits the /api/history/convert_ae/<id> endpoint which re-runs the same
-  // ffmpeg transcode the fresh-download path applies. Used for entries
-  // downloaded before v1.19 or on a machine that didn't have ffmpeg at
-  // download time.
+  // Hits the /api/history/convert_ae/<id> endpoint which spawns a real
+  // background job. The new job id comes back and gets pushed into the
+  // active queue so the user watches a live progress bar instead of a
+  // background-toast they have no way to verify finished.
   // -------------------------------------------------------------------------
   async function convertHistoryToAE(id) {
     if (!await appConfirm(
       'Convert to AE-friendly?',
-      'Re-encodes this video to H.264 + AAC mp4 so After Effects, Premiere, and DaVinci can import it. Replaces the original file. Takes a few minutes per video; the app stays usable while it runs.'
+      'Re-encodes this video to H.264 + AAC mp4 so After Effects, Premiere, and DaVinci can import it. Replaces the original file. The active queue (top right) shows live progress while it runs; the app stays fully usable in the meantime.'
     )) return;
-    toast('Converting in background…', 'ok');
     const r = await api('POST', '/api/history/convert_ae/' + encodeURIComponent(id));
     if (!r.ok) { toast(r.error || 'Convert failed', 'err'); return; }
-    toast('Converted — drop into AE/Premiere/DaVinci anytime', 'ok');
-    loadHistory();
+    if (r.job_id) {
+      // Add the convert as a real active-queue row. The master poller
+      // picks it up automatically and the row finishes at "✓ complete".
+      addJob(r.job_id, r.title || 'Convert to AE-friendly');
+      toast('Conversion started · watch the active queue', 'ok');
+    } else {
+      // Backend didn't return a job id (legacy path). Refresh history
+      // to pick up the result anyway.
+      toast('Conversion started', 'ok');
+      loadHistory();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -5115,8 +5205,10 @@
     const ringHandle = document.getElementById('cp-ring-handle');
     const sv         = document.getElementById('cp-sv');
     const svCursor   = document.getElementById('cp-sv-cursor');
+    // Hex input was removed in v1.20 (visual clutter). Treat it as
+    // optional everywhere below so the picker still initializes.
     const hex        = document.getElementById('cp-hex');
-    if (!ring || !sv || !hex) return {};
+    if (!ring || !sv) return {};
 
     // Ring drag uses center-of-ring for angle calc. The radius used to
     // position the handle is a PERCENTAGE so it survives the picker
@@ -5155,9 +5247,9 @@
       ringHandle.style.left = hx_ + '%';
       ringHandle.style.top  = hy_ + '%';
 
-      // Reflect into hex field (skip when the user is actively typing
-      // so we don't clobber mid-type edits)
-      if (document.activeElement !== hex) hex.value = hx;
+      // Reflect into hex field if it exists (it was removed in v1.20
+      // but the bookkeeping below still respects it for forward compat)
+      if (hex && document.activeElement !== hex) hex.value = hx;
 
       if (fire) {
         applyAccentHex(hx);
@@ -5233,18 +5325,22 @@
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
 
-    // Hex input: accept partial typing, commit on full valid hex
-    hex.addEventListener('input', () => {
-      const rgb = _hexToRgb(hex.value);
-      if (!rgb) return;  // still typing partial value
-      const [h, s, v] = _rgbToHsv(...rgb);
-      state.h = h; state.s = s; state.v = v;
-      paint(true);
-    });
-    hex.addEventListener('blur', () => {
-      // If left in an invalid state, snap back to the real color
-      if (!_hexToRgb(hex.value)) paint(false);
-    });
+    // Hex input: removed in v1.20. The two listeners below only attach
+    // when an element with id="cp-hex" exists, so legacy markup that
+    // still ships the input keeps working without rebuild.
+    if (hex) {
+      hex.addEventListener('input', () => {
+        const rgb = _hexToRgb(hex.value);
+        if (!rgb) return;  // still typing partial value
+        const [h, s, v] = _rgbToHsv(...rgb);
+        state.h = h; state.s = s; state.v = v;
+        paint(true);
+      });
+      hex.addEventListener('blur', () => {
+        // If left in an invalid state, snap back to the real color
+        if (!_hexToRgb(hex.value)) paint(false);
+      });
+    }
 
     function setHex(hx) {
       const rgb = _hexToRgb(hx);
